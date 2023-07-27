@@ -267,6 +267,8 @@ class GP(object):
         # Mean function returns zeros by default
         if mf is None:
             self.mf = lambda p, x_l, x_t: jnp.zeros((self.N_l, self.N_t))
+        else:
+            self.mf = mf
             
         # Log Prior function returns zero by default
         if log_prior_fn is None:

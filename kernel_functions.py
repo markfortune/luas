@@ -24,6 +24,11 @@ def rbf_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
     return jnp.exp(-0.5 * tau)
 
 
+def matern32_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
+    delta_t = jnp.abs(x / l - y / l)
+    return (1+jnp.sqrt(3)*delta_t)*jnp.exp(-jnp.sqrt(3)*delta_t)
+
+
 def ration_quad_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
     tau = jnp.sum(jnp.square(x / l - y / l))
     return jnp.reciprocal(jnp.sqrt(1 + tau))
