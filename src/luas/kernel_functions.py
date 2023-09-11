@@ -11,12 +11,12 @@ def evaluate_kernel(kernel_fn: Callable, x: jnp.array, y: jnp.array, l: jnp.floa
 
 
 def periodic_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
-    tau = jnp.square(jnp.sin(x - y)/l)
+    tau = jnp.sum(jnp.square(jnp.sin(x - y)/l))
     return jnp.exp(-2.0 * tau)
 
 
 def cosine_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
-    return jnp.cos(x-y)
+    return jnp.sum(jnp.cos(x-y))
 
 
 def rbf_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
@@ -25,7 +25,7 @@ def rbf_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
 
 
 def matern32_kernel(x: jnp.array, y: jnp.array, l: jnp.float64) -> jnp.array:
-    delta_t = jnp.abs(x / l - y / l)
+    delta_t = jnp.sum(jnp.abs(x / l - y / l))
     return (1+jnp.sqrt(3)*delta_t)*jnp.exp(-jnp.sqrt(3)*delta_t)
 
 
