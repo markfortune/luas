@@ -1,9 +1,15 @@
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 import numpy as np
+from .luas_types import PyTree, JAXArray
 
+__all__ = [
+    "order_list",
+    "array_to_pytree2D",
+    "pytree2D_to_array",
+]
 
-def order_list(par_list):
+def order_list(par_list: list) -> list:
     
     map_dict = {par:i for (i, par) in enumerate(par_list)}
     list_map, f = ravel_pytree(map_dict)
@@ -13,7 +19,7 @@ def order_list(par_list):
     return par_ordered
 
     
-def array_to_pytree2D(p_untransf, hessian_array):
+def array_to_pytree2D(p_untransf: PyTree, hessian_array: JAXArray) -> PyTree:
 
     param_list = list(p_untransf.keys())
     par_order = order_list(param_list)
@@ -38,7 +44,7 @@ def array_to_pytree2D(p_untransf, hessian_array):
     return hess_dict
     
     
-def pytree2D_to_array(p_untransf, hessian_dict):
+def pytree2D_to_array(p_untransf: PyTree, hessian_dict: PyTree) -> JAXArray:
         
         cov_order = {}
         

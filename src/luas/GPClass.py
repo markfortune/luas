@@ -1,67 +1,82 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy
-import jax.config
-import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
-from jax import jit, grad, value_and_grad, hessian, vmap
 from copy import deepcopy
 from tqdm import tqdm
 from functools import partial
+from typing import Any, Optional, Callable, Union, Dict, Tuple
+import jax.config
+import jax.numpy as jnp
+from jax.flatten_util import ravel_pytree
+from jax import jit, grad, hessian
+
+from .luas_types import Scalar, PyTree, JAXArray, Kernel
 from .jax_convenience_fns import order_list, pytree2D_to_array, array_to_pytree2D
 from .kronecker_functions import kron_prod, kronecker_inv_vec
+
+__all__ = ["GP"]
 
 # Ensure we are using double precision floats as JAX uses single precision by default
 jax.config.update("jax_enable_x64", True)
 
+PyTreeOrArray = Union[JAXArray, PyTree]
 
 class GP(object):
-    def __init__(self, initial_params, mfp_to_fit, hp_to_fit, x_l, x_t, Y, kf,
-                 mf = None, logPrior = None, gaussian_prior_dict = None,
-                 log_params = None, transform_fn = None, transform_args = None):
-        
-        """
-        GP class using the Kronecker product structure of the covariance matrix to extend GPs to
-        2D regular structures relatively cheaply.
+    """GP class using the Kronecker product structure of the covariance matrix to extend GPs to
+    2D regular structures relatively cheaply.
 
-                   --------------------------------
-                  |                                |
-                  |                                |
-                  |                                |
-        x_l (N_l) |       Y (N_l x N_t) data       |
-        input     |                                |
-                  |                                |
-                  |                                |
-                   --------------------------------  
-                            x_t (N_t) input
+               --------------------------------
+              |                                |
+              |                                |
+              |                                |
+    x_l (N_l) |       Y (N_l x N_t) data       |
+    input     |                                |
+              |                                |
+              |                                |
+               --------------------------------  
+                        x_t (N_t) input
 
-        Must be two input dimensions, and each are treated independently to create a kernel in
-        each dimension. These are then combined with the sum of two Kronecker products to produce
-        the full covariance matrix, although using eigendecomposition allows us to avoid computing and
-        inverting huge matrices.
+    Must be two input dimensions, and each are treated independently to create a kernel in
+    each dimension. These are then combined with the sum of two Kronecker products to produce
+    the full covariance matrix, although using eigendecomposition allows us to avoid computing and
+    inverting huge matrices.
 
-        Kl and Sl (both MxM) will be the covariance matrices in the wavelength/vertical direction,
-        Kt and St (both NxN) will be the covariance matrices in the time/horizontal direction.
-        The full covariance is given by K = (Kl KRON Kt + Sl KRON St).
+    Kl and Sl (both MxM) will be the covariance matrices in the wavelength/vertical direction,
+    Kt and St (both NxN) will be the covariance matrices in the time/horizontal direction.
+    The full covariance is given by K = (Kl KRON Kt + Sl KRON St).
 
-        :inputs
-        -------
-        
-        initial_params - dictionary of starting guesses for mean function parameters and hyperparameters
-        mfp_to_fit - a list of the names of mean function parameters which are being fit (i.e. not fixed)
-        hp_to_fit - a list of the names of hyperparameters which are being fit (i.e. not fixed)
-        x_l,x_t - arrays containing the two input variables: np.array([x1,x2]).T
-        Y - 2D array containing the observed data
-        kf - Kernel object containing functions to calculate Kl, Kt, Sl, St as methods
-        mf - mean function, by default returns zeros. Needs to be in the format mf(p, x_l, x_t)
-        logPrior - log prior function, optional as PyMC can also be used for priors but more complex priors
+    Args:
+        initial_params (PyTree): dictionary of starting guesses for mean function parameters and hyperparameters
+        mfp_to_fit (list): a list of the names of mean function parameters which are being fit (i.e. not fixed)
+        hp_to_fit (list): a list of the names of hyperparameters which are being fit (i.e. not fixed)
+        x_l (JAXArray): array containing wavelength dimension
+        x_t (JAXArray): array containing time dimension
+        Y (JAXArray): 2D array containing the observed data
+        kf (Kernel): kernel object which has already been initialised with the desired kernel function
+        mf (Callable, optional): mean function, by default returns zeros. Needs to be in the format mf(p, x_l, x_t)
+        logPrior (Callable, optional): log prior function, optional as PyMC can also be used for priors but more complex priors 
             can be used with this
-        log_params - list of variable names which it is desired to fit for the log of the parameter (uses log base 10)
-        transform_fn - function for transforming variables being fit to variable values. Where log parameters are transformed
-        transform_args - arguments to transform_fn. If using default transform_fn then this can be left as None
+        log_params (list, optional): list of variable names which it is desired to fit for the log of the parameter (uses log base 10)
+        transform_fn (Callable, optional): function for transforming variables being fit to variable values. Where log parameters are transformed
+        transform_args (tuple, optional): arguments to transform_fn. If using default transform_fn then this can be left as None
 
-        """
-        
+    """
+    
+    def __init__(
+        self,
+        initial_params: dict,
+        mfp_to_fit: list[str],
+        hp_to_fit: list[str],
+        x_l: JAXArray,
+        x_t: JAXArray,
+        Y: JAXArray,
+        kf: Kernel,
+        mf: Optional[Callable] = None,
+        logPrior: Optional[Callable] = None,
+        gaussian_prior_dict: Optional[Dict] = None,
+        log_params: Optional[list[str]] = None,
+        transform_fn: Optional[Callable] = None,
+        transform_args: Any = None,
+    ):
         # Initialise variables
         self.p_initial = initial_params
         self.p = {k:initial_params[k] for k in (mfp_to_fit + hp_to_fit)}
@@ -117,13 +132,18 @@ class GP(object):
                             "to create a logPrior function have been specified")
            
         # Convenient function for transforming untransformed parameter dict into a transformed dict
-        self.transf_p = lambda p: self.transform_fn(p, *transform_args)
+        self.transform_p = lambda p: self.transform_fn(p, *transform_args)
         self.logPrior_transf = lambda p_untransf: self.logPrior(p_untransf, self.transform_fn(p_untransf, *transform_args))
         self.grad_logPrior_transf = grad(self.logPrior_transf)
         self.hessian_logPrior_transf = hessian(self.logPrior_transf)
         
         
-    def default_param_transform(self, p_vary, p_fixed, log_params):
+    def default_param_transform(
+        self,
+        p_vary: PyTree,
+        p_fixed: PyTree,
+        log_params: list[str],
+    ) -> PyTree:
 
         # Copy to avoid transformation affecting stored values
         p = deepcopy(p_fixed)
@@ -138,7 +158,7 @@ class GP(object):
         return p
 
     
-    def check_storage_dict(self, storage_dict):
+    def check_storage_dict(self, storage_dict: PyTree) -> Tuple[PyTree, bool]:
         if storage_dict is None:
             storage_dict = {}
             return_storage_dict = False
@@ -146,21 +166,35 @@ class GP(object):
             return_storage_dict = True
         return storage_dict, return_storage_dict
     
-    
-    def build_storage_dict(self, p):
+
+    def check_p_type(self, p: PyTreeOrArray) -> Tuple[PyTree, bool]:
         
-        return self.kf.eigen_fn(p, self.x_l, self.x_t, transform_fn = self.transf_p)
+        p_is_array = not isinstance(p, dict)
+        
+        if p_is_array:
+            # Convert array to a parameter dictionary and then perform as logL as normal
+            p = self.make_p_dict(p)
+            
+        return p, p_is_array
     
+    
+    def build_storage_dict(self, p: PyTree) -> PyTree:
+        
+        return self.kf.decomp_fn(p, self.x_l, self.x_t, transform_fn = self.transform_p)
     
     
     @partial(jax.jit, static_argnums=(0,))
-    def logL(self, p, storage_dict = None):
+    def logL(
+        self,
+        p: PyTreeOrArray,
+        storage_dict: Optional[PyTree] = None,
+    ) -> Union[Scalar, Tuple[Scalar, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
         
         # Calculate log-likelihood
-        logL, storage_dict = self.kf.logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict, transform_fn = self.transf_p)
+        logL, storage_dict = self.kf.logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict, transform_fn = self.transform_p)
         
         if return_storage_dict:
             return logL, storage_dict
@@ -170,13 +204,17 @@ class GP(object):
     
     
     @partial(jax.jit, static_argnums=(0,))
-    def grad_logL(self, p, storage_dict = None):
+    def grad_logL(
+        self,
+        p: PyTreeOrArray,
+        storage_dict: Optional[PyTree] = None,
+    ) -> Union[PyTreeOrArray, Tuple[PyTreeOrArray, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
         
         grad_dict, storage_dict = self.kf.grad_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict,
-                                      fit_mfp = self.mfp, transform_fn = self.transf_p)
+                                      fit_mfp = self.mfp, transform_fn = self.transform_p)
         
         if p_is_array:
             grad_vals = ravel_pytree(grad_dict)[0]
@@ -190,13 +228,17 @@ class GP(object):
     
     
     @partial(jax.jit, static_argnums=(0,))
-    def value_and_grad_logL(self, p, storage_dict = None):
+    def value_and_grad_logL(
+        self,
+        p: PyTreeOrArray,
+        storage_dict: Optional[PyTree] = None,
+    ) -> Union[Tuple[Scalar, PyTreeOrArray], Tuple[Scalar, PyTreeOrArray, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
         
         (logL, storage_dict), grad_dict = self.kf.value_and_grad_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict,
-                                                      fit_mfp = self.mfp, transform_fn = self.transf_p)
+                                                      fit_mfp = self.mfp, transform_fn = self.transform_p)
         
         if p_is_array:
             grad_vals = ravel_pytree(grad_dict)[0]
@@ -209,7 +251,12 @@ class GP(object):
             return logL, grad_vals
         
     
-    def hessian_logL(self, p, large = False, storage_dict = None):
+    def hessian_logL(
+        self,
+        p: PyTreeOrArray,
+        large: Optional[bool] = False,
+        storage_dict: Optional[PyTree] = None
+    ) -> Union[PyTreeOrArray, Tuple[PyTreeOrArray, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
@@ -217,10 +264,10 @@ class GP(object):
         if large:
             hessian_dict, storage_dict = self.kf.large_hessian_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf,
                                                                     storage_dict = storage_dict, fit_mfp = self.mfp, fit_hp = self.hp,
-                                                                    transform_fn = self.transf_p, make_p_dict = self.make_p_dict)
+                                                                    transform_fn = self.transform_p)
         else:
             hessian_dict, storage_dict = self.kf.hessian_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict,
-                                                              fit_mfp = self.mfp, fit_hp = self.hp, transform_fn = self.transf_p)
+                                                              fit_mfp = self.mfp, fit_hp = self.hp, transform_fn = self.transform_p)
         
         if p_is_array:
             hessian_vals = pytree2D_to_array(p_dict, hessian_dict)
@@ -234,7 +281,7 @@ class GP(object):
         
         
     
-    def make_logPrior(self, prior_dict):
+    def make_logPrior(self, prior_dict: PyTree) -> Callable:
         
         def logPrior_fn(p_untransf, p_transf):
             
@@ -247,13 +294,17 @@ class GP(object):
 
     
     @partial(jax.jit, static_argnums=(0,))
-    def logP(self, p, storage_dict = None):
+    def logP(
+        self,
+        p: PyTreeOrArray,
+        storage_dict: Optional[PyTree] = None,
+    ) -> Union[Scalar, Tuple[Scalar, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
         
         # Calculate log-likelihood
-        logL, storage_dict = self.kf.logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict, transform_fn = self.transf_p)
+        logL, storage_dict = self.kf.logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict, transform_fn = self.transform_p)
         logPrior = self.logPrior_transf(p_dict)
         logP = logPrior + logL
         
@@ -264,13 +315,17 @@ class GP(object):
     
     
     @partial(jax.jit, static_argnums=(0,))
-    def grad_logP(self, p, storage_dict = None):
+    def grad_logP(
+        self,
+        p: PyTreeOrArray,
+        storage_dict: Optional[PyTree] = None,
+    ) -> Union[PyTreeOrArray, Tuple[PyTreeOrArray, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
         
         grad_dict, storage_dict = self.kf.grad_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict,
-                                      fit_mfp = self.mfp, transform_fn = self.transf_p)
+                                      fit_mfp = self.mfp, transform_fn = self.transform_p)
         
         prior_grad_dict = self.grad_logPrior_transf(p_dict)
         
@@ -289,13 +344,17 @@ class GP(object):
         
         
     @partial(jax.jit, static_argnums=(0,))
-    def value_and_grad_logP(self, p, storage_dict = None):
+    def value_and_grad_logP(
+        self,
+        p: PyTreeOrArray,
+        storage_dict: Optional[PyTree] = None,
+    ) -> Union[Tuple[Scalar, PyTreeOrArray], Tuple[Scalar, PyTreeOrArray, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
         
         (logL, storage_dict), grad_dict = self.kf.value_and_grad_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict,
-                                                      fit_mfp = self.mfp, transform_fn = self.transf_p)
+                                                      fit_mfp = self.mfp, transform_fn = self.transform_p)
         logPrior = self.logPrior_transf(p_dict)
         logP = logPrior + logL
         
@@ -315,7 +374,12 @@ class GP(object):
             return logP, grad_vals
     
     
-    def hessian_logP(self, p, storage_dict = None, large = False):
+    def hessian_logP(
+        self,
+        p: PyTreeOrArray,
+        large: Optional[bool] = False,
+        storage_dict: Optional[PyTree] = None
+    ) -> Union[PyTreeOrArray, Tuple[PyTreeOrArray, PyTree]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p)
@@ -325,10 +389,10 @@ class GP(object):
         if large:
             hessian_dict, storage_dict = self.kf.large_hessian_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf,
                                                                     storage_dict = storage_dict, fit_mfp = self.mfp, fit_hp = self.hp,
-                                                                    transform_fn = self.transf_p, make_p_dict = self.make_p_dict)
+                                                                    transform_fn = self.transform_p, make_p_dict = self.make_p_dict)
         else:
             hessian_dict, storage_dict = self.kf.hessian_logL(p_dict, self.x_l, self.x_t, self.Y, self.mf, storage_dict = storage_dict,
-                                                              fit_mfp = self.mfp, fit_hp = self.hp, transform_fn = self.transf_p)
+                                                              fit_mfp = self.mfp, fit_hp = self.hp, transform_fn = self.transform_p)
         
         for i in self.mfp + self.hp:
             for j in self.mfp + self.hp:
@@ -345,9 +409,14 @@ class GP(object):
             return hessian_vals
 
     
-    def hessian_to_covariance_mat(self, hessian_val, regularise = False, regularise_sigma = 0.1):
+    def hessian_to_covariance_mat(
+        self,
+        hessian_val: PyTree,
+        regularise: Optional[bool] = False,
+        regularise_sigma: Optional[Scalar] = 0.1
+    ) -> PyTree:
         
-        if type(hessian_val) == dict:
+        if isinstance(hessian_val, dict):
             hess_mat = pytree2D_to_array(self.p, hessian_val)
         else:
             hess_mat = hessian_val
@@ -362,26 +431,26 @@ class GP(object):
             hess_mat += jnp.diag(regularise_vec)
             self.cov_mat = jnp.linalg.inv(-hess_mat)
             
-            #print(f"Regularised locations where a {regularise_sigma} prior sigma was added: ", jnp.arange(cov_diag.size)[neg_ind], self.cov_order)
+#             print(f"Regularised locations where a {regularise_sigma} prior sigma was added: ", jnp.arange(cov_diag.size)[neg_ind], self.cov_order)
             
         self.cov_dict = array_to_pytree2D(self.p, self.cov_mat)
         
         return self.cov_dict
     
     
-    def get_cov(self, p_list):
+    def get_cov(self, p_list: list[str]) -> JAXArray:
         
         order_dict = {}
 
         i = 0
         for param in p_list:
-            if type(self.p_initial[param]) in [float, np.float32, np.float64, jnp.float32, jnp.float64]:
-                order_dict[param] = jnp.arange(i, i+1)
-                i += 1
-            else:
+            if isinstance(self.p_initial[param], JAXArray):
                 param_size = self.p_initial[param].size
                 order_dict[param] = jnp.arange(i, i+param_size)
                 i += param_size
+            else:
+                order_dict[param] = jnp.arange(i, i+1)
+                i += 1
         
         cov_mat = jnp.zeros((i, i))
 
@@ -396,13 +465,17 @@ class GP(object):
     
     
     @partial(jax.jit, static_argnums=(0,))
-    def predict(self, p_untransf, storage_dict = None):
+    def predict(
+        self,
+        p_untransf: PyTreeOrArray,
+        storage_dict: Optional[PyTree] = None,
+    ) -> Union[Tuple[JAXArray, JAXArray, JAXArray, PyTree], Tuple[JAXArray, JAXArray, JAXArray]]:
         
         storage_dict, return_storage_dict = self.check_storage_dict(storage_dict)
         p_dict, p_is_array = self.check_p_type(p_untransf)
         
         gp_mean, sigma_diag, M = self.kf.predict(p_dict, self.x_l, self.x_l, self.x_t, self.x_t, self.Y, self.mf,
-                                                 storage_dict = storage_dict, transform_fn = self.transf_p)
+                                                 storage_dict = storage_dict, transform_fn = self.transform_p)
         
         if return_storage_dict:
             return gp_mean, sigma_diag, M, storage_dict
@@ -410,7 +483,7 @@ class GP(object):
             return gp_mean, sigma_diag, M
     
     
-    def clip_outliers(self, p, sigma):
+    def clip_outliers(self, p: PyTreeOrArray, sigma: Scalar) -> JAXArray:
         
         gp_mean, sigma_diag, M = self.predict(p)
         
@@ -439,29 +512,25 @@ class GP(object):
         return Y_clean
     
     
-    def check_p_type(self, p):
-        
-        p_is_array = type(p) != dict
-        
-        if p_is_array:
-            # Convert array to a parameter dictionary and then perform as logL as normal
-            p = self.make_p_dict(p)
-            
-        return p, p_is_array
-    
-    
     @partial(jax.jit, static_argnums=(0,))
-    def calc_mf(self, p):
+    def calc_mf(self, p: PyTreeOrArray) -> JAXArray:
         p, p_is_array = self.check_p_type(p)
         
-        return self.mf(self.transf_p(p), self.x_l, self.x_t)
+        return self.mf(self.transform_p(p), self.x_l, self.x_t)
     
     @partial(jax.jit, static_argnums=(0,))
-    def calc_residuals(self, p):
-        return self.Y - self.mf(self.transf_p(p), self.x_l, self.x_t)
+    def calc_residuals(self, p: PyTreeOrArray) -> JAXArray:
+        p, p_is_array = self.check_p_type(p)
+        
+        return self.Y - self.mf(self.transform_p(p), self.x_l, self.x_t)
     
     
-    def auto_correlate(self, p, l_sep = None, t_sep = None):
+    def autocorrelate(
+        self,
+        p: PyTreeOrArray,
+        l_sep = None,
+        t_sep = None,
+    ) -> JAXArray:
         
         if l_sep is None:
             l_sep = self.N_l-1
@@ -471,17 +540,22 @@ class GP(object):
         gp_mean, sigma_diag, M = self.predict(p)
         res = self.Y - gp_mean
 
-        auto_corr = scipy.signal.correlate2d(res, res)
+        auto_corr = jax.scipy.signal.correlate2d(res, res)
         
         n_l, n_t = auto_corr.shape
         auto_corr_centre = ((n_l-1)//2, (n_t-1)//2)
-        auto_corr[:, :] /= auto_corr[auto_corr_centre[0], auto_corr_centre[1]]
-        auto_corr[auto_corr_centre[0], auto_corr_centre[1]] = 0.
+        auto_corr /= auto_corr[auto_corr_centre[0], auto_corr_centre[1]]
+        auto_corr = auto_corr.at[auto_corr_centre[0], auto_corr_centre[1]].set(0.)
         
-        if self.x_t.ndim > 1:
-            self.x_t_pred = self.x_t[:, 0]
         if self.x_l.ndim > 1:
             self.x_l_pred = self.x_l[:, 0]
+        else:
+            self.x_l_pred = self.x_l
+            
+        if self.x_t.ndim > 1:
+            self.x_t_pred = self.x_t[:, 0]
+        else:
+            self.x_t_pred = self.x_t
         
         t_step = self.x_t_pred.ptp()/(self.N_t-1)
         l_step = self.x_l_pred.ptp()/(self.N_l-1)
@@ -497,7 +571,7 @@ class GP(object):
         return auto_corr
     
     
-    def plot(self, p_untransf, fig=None):
+    def plot(self, p_untransf: PyTreeOrArray, fig: Optional[plt.Figure] = None):
     
         #run prediction
         gp_mean, gp_cov, M = self.predict(p_untransf)

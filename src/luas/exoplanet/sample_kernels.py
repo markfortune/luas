@@ -1,8 +1,17 @@
 from ..LuasKernel import LuasKernel
 from ..kernel_functions import evaluate_kernel, rbf_kernel
 import jax.numpy as jnp
+from typing import Optional, Dict
+from ..luas_types import JAXArray
 
-def Kl_VLT(hp, x_l1, x_l2, wn = True):
+
+
+def Kl_VLT(
+    hp: Dict[str, JAXArray],
+    x_l1: JAXArray,
+    x_l2: JAXArray,
+    wn: Optional[bool] = True
+) -> JAXArray:
     
     Kl = evaluate_kernel(rbf_kernel, x_l1, x_l2, hp["l_l_CM"])
     
@@ -16,7 +25,12 @@ Kl_VLT.hp = ["h_CM", "h_WSS", "l_l_CM"]
 Kl_VLT.diag = False
 
 
-def Kt_VLT(hp, x_t1, x_t2, wn = True):
+def Kt_VLT(
+    hp: Dict[str, JAXArray],
+    x_t1: JAXArray,
+    x_t2: JAXArray,
+    wn: Optional[bool] = True
+) -> JAXArray:
     
     Kt = evaluate_kernel(rbf_kernel, x_t1, x_t2, hp["l_t"])
     
@@ -25,7 +39,12 @@ Kt_VLT.hp = ["l_t"]
 Kt_VLT.diag = False
 
 
-def Sl_VLT(hp, x_l1, x_l2, wn = True):
+def Sl_VLT(
+    hp: Dict[str, JAXArray],
+    x_l1: JAXArray,
+    x_l2: JAXArray,
+    wn: Optional[bool] = True
+) -> JAXArray:
     
     Sl = hp["h_HFS"]**2 * evaluate_kernel(rbf_kernel, x_l1, x_l2, hp["l_l_HFS"])
     
@@ -37,7 +56,13 @@ Sl_VLT.hp = ["h_HFS", "l_l_HFS", "sigma"]
 Sl_VLT.diag = False
 
 
-def St_VLT(hp, x_t1, x_t2, wn = True):
+def St_VLT(
+    hp: Dict[str, JAXArray],
+    x_t1: JAXArray,
+    x_t2: JAXArray,
+    wn: Optional[bool] = True
+) -> JAXArray:
+    
     return jnp.eye(x_t1.size)
 St_VLT.hp = []
 St_VLT.diag = True
