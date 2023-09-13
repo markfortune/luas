@@ -23,7 +23,7 @@ PyTreeOrArray = Union[JAXArray, PyTree]
 class GP(object):
     """GP class using the Kronecker product structure of the covariance matrix to extend GPs to
     2D regular structures relatively cheaply.
-
+    
                --------------------------------
               |                                |
               |                                |
@@ -34,7 +34,7 @@ class GP(object):
               |                                |
                --------------------------------  
                         x_t (N_t) input
-
+    
     Must be two input dimensions, and each are treated independently to create a kernel in
     each dimension. These are then combined with the sum of two Kronecker products to produce
     the full covariance matrix, although using eigendecomposition allows us to avoid computing and
@@ -43,7 +43,7 @@ class GP(object):
     Kl and Sl (both MxM) will be the covariance matrices in the wavelength/vertical direction,
     Kt and St (both NxN) will be the covariance matrices in the time/horizontal direction.
     The full covariance is given by K = (Kl KRON Kt + Sl KRON St).
-
+    
     Args:
         initial_params (PyTree): dictionary of starting guesses for mean function parameters and hyperparameters
         mfp_to_fit (list): a list of the names of mean function parameters which are being fit (i.e. not fixed)
@@ -58,7 +58,7 @@ class GP(object):
         log_params (list, optional): list of variable names which it is desired to fit for the log of the parameter (uses log base 10)
         transform_fn (Callable, optional): function for transforming variables being fit to variable values. Where log parameters are transformed
         transform_args (tuple, optional): arguments to transform_fn. If using default transform_fn then this can be left as None
-
+    
     """
     
     def __init__(

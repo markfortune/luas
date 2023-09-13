@@ -11,8 +11,8 @@ Welcome to luas's documentation!
         luas/GPClass
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+  api
+  modules
 
 
 

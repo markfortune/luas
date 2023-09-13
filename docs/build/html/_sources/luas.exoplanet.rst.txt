@@ -4,14 +4,6 @@ luas.exoplanet package
 Submodules
 ----------
 
-luas.exoplanet.experimental\_kernels module
--------------------------------------------
-
-.. automodule:: luas.exoplanet.experimental_kernels
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 luas.exoplanet.sample\_kernels module
 -------------------------------------
 
