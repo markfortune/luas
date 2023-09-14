@@ -13,6 +13,7 @@ Welcome to luas's documentation!
 .. toctree::
   api
   modules
+  tutorials
 
 
 
