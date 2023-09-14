@@ -1,10 +1,8 @@
 from ..LuasKernel import LuasKernel
-from ..kernel_functions import evaluate_kernel, rbf_kernel
+from ..kernel_functions import evaluate_kernel, squared_exp_kernel
 import jax.numpy as jnp
 from typing import Optional, Dict
 from ..luas_types import JAXArray
-
-
 
 def Kl_VLT(
     hp: Dict[str, JAXArray],
@@ -13,7 +11,7 @@ def Kl_VLT(
     wn: Optional[bool] = True
 ) -> JAXArray:
     
-    Kl = evaluate_kernel(rbf_kernel, x_l1, x_l2, hp["l_l_CM"])
+    Kl = evaluate_kernel(squared_exponential_kernel, x_l1, x_l2, hp["l_l_CM"])
     
     h_mat = jnp.diag(hp["h_CM"] * jnp.ones_like(x_l1))
     Kl = h_mat @ Kl @ h_mat
@@ -32,7 +30,7 @@ def Kt_VLT(
     wn: Optional[bool] = True
 ) -> JAXArray:
     
-    Kt = evaluate_kernel(rbf_kernel, x_t1, x_t2, hp["l_t"])
+    Kt = evaluate_kernel(squared_exponential_kernel, x_t1, x_t2, hp["l_t"])
     
     return Kt
 Kt_VLT.hp = ["l_t"]
@@ -46,7 +44,7 @@ def Sl_VLT(
     wn: Optional[bool] = True
 ) -> JAXArray:
     
-    Sl = hp["h_HFS"]**2 * evaluate_kernel(rbf_kernel, x_l1, x_l2, hp["l_l_HFS"])
+    Sl = hp["h_HFS"]**2 * evaluate_kernel(squared_exponential_kernel, x_l1, x_l2, hp["l_l_HFS"])
     
     if wn:
         Sl += jnp.diag(jnp.square(hp["sigma"]) * jnp.ones_like(x_l1))

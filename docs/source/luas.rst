@@ -1,17 +1,6 @@
 luas package
 ============
 
-Subpackages
------------
-
-.. toctree::
-   :maxdepth: 4
-
-   luas.exoplanet
-
-Submodules
-----------
-
 luas.GPClass module
 -------------------
 
@@ -56,14 +45,6 @@ luas.kronecker\_functions module
 --------------------------------
 
 .. automodule:: luas.kronecker_functions
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
-
-.. automodule:: luas
    :members:
    :undoc-members:
    :show-inheritance:

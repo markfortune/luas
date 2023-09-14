@@ -4,7 +4,12 @@ import jax
 import numpy as np
 from copy import deepcopy
 
-from .kernel_functions import evaluate_kernel, rbf_kernel, matern32_kernel, ration_quad_kernel
+from .kernel_functions import (
+    evaluate_kernel,
+    squared_exponential_kernel,
+    matern32_kernel,
+    rational_quadratic_kernel
+)
 from .GeneralKernel import GeneralKernel
 from .LuasKernel import LuasKernel
 from .GPClass import GP

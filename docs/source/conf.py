@@ -27,7 +27,7 @@ extensions = [
     "myst_nb",
     "IPython.sphinxext.ipython_console_highlighting",
 ]
-
+myst_enable_extensions = ["dollarmath"]
 templates_path = ['_templates']
 exclude_patterns = []
 
