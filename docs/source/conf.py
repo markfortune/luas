@@ -38,7 +38,7 @@ exclude_patterns = []
 
 html_theme = 'sphinx_book_theme'
 html_title = 'luas'
-html_logo = "_static/luas_icon.png"
+#html_logo = "_static/luas_icon.png"
 html_static_path = ['_static']
 html_theme_options = {
     "path_to_docs": "docs",
@@ -48,9 +48,11 @@ html_theme_options = {
         "notebook_interface": "jupyterlab",
         "colab_url": "https://colab.research.google.com/",
     },
+    "show_navbar_depth": 3,
+    "home_page_in_toc": True,
     "use_edit_page_button": False,
     "use_issues_button": False,
     "use_repository_button": True,
     "use_download_button": True,
 }
-nb_execution_mode = "auto"
+nb_execution_mode = "off"

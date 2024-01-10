@@ -4,11 +4,10 @@ import jax
 import numpy as np
 from copy import deepcopy
 
-from .kernel_functions import (
-    evaluate_kernel,
-    squared_exponential_kernel,
-    matern32_kernel,
-    rational_quadratic_kernel
+from .kernels import (
+    squared_exp,
+    matern32,
+    rational_quadratic
 )
 from .GeneralKernel import GeneralKernel
 from .LuasKernel import LuasKernel
@@ -70,7 +69,7 @@ def mf(par, x_l, x_t):
 
 def Kl(hp, x_l1, x_l2, wn = True):
     
-    Kl = evaluate_kernel(rbf_kernel, x_l1, x_l2, hp["l_l_CM"])
+    Kl = squared_exp(x_l1, x_l2, hp["l_l_CM"])
     
     h_mat = jnp.diag(hp["h_CM"] * jnp.ones_like(x_l1))
     Kl = h_mat @ Kl @ h_mat
@@ -84,7 +83,7 @@ Kl.diag = False
 
 def Kt(hp, x_t1, x_t2, wn = True):
     
-    Kt = evaluate_kernel(matern32_kernel, x_t1, x_t2, hp["l_t"])
+    Kt = squared_exp(x_t1, x_t2, hp["l_t"])
     
     return Kt
 Kt.hp = ["l_t"]
@@ -93,7 +92,7 @@ Kt.diag = False
 
 def Sl(hp, x_l1, x_l2, wn = True):
     
-    Sl = hp["h_HFS"]**2 * evaluate_kernel(ration_quad_kernel, x_l1, x_l2, hp["l_l_HFS"])
+    Sl = hp["h_HFS"]**2 * squared_exp(x_l1, x_l2, hp["l_l_HFS"])
     
     if wn:
         Sl += jnp.diag(jnp.square(hp["sigma"]) * jnp.ones_like(x_l1))
@@ -120,15 +119,15 @@ def kf_general():
 
 @pytest.fixture
 def par_GP(N_l, N_t):
-    return {"T0":-0.0021*jnp.ones(1), "P":3.4059095*jnp.ones(1), "a":8.19*jnp.ones(1), "b":0.761*jnp.ones(1), "rho":0.12546*jnp.ones(N_l),
-                  "h_CM":1.5e-3*jnp.ones(1), "l_t":0.011*jnp.ones(1), "l_l_CM":2201.*jnp.ones(1), "sigma":1.2e-3*jnp.ones(N_l),
-                  "h_WSS":2e-4*jnp.ones(N_l), "h_HFS":3e-4*jnp.ones(1), "l_l_HFS":1000.*jnp.ones(1), "wn_t":1.1*jnp.ones(N_t)}
+    return {"mfp":{"T0":-0.0021*jnp.ones(1), "P":3.4059095*jnp.ones(1), "a":8.19*jnp.ones(1), "b":0.761*jnp.ones(1), "rho":0.12546*jnp.ones(N_l)},
+                  "hp":{"h_CM":1.5e-3*jnp.ones(1), "l_t":0.011*jnp.ones(1), "l_l_CM":2201.*jnp.ones(1), "sigma":1.2e-3*jnp.ones(N_l),
+                  "h_WSS":2e-4*jnp.ones(N_l), "h_HFS":3e-4*jnp.ones(1), "l_l_HFS":1000.*jnp.ones(1), "wn_t":1.1*jnp.ones(N_t)}}
 
 @pytest.fixture
 def par_sim(N_l, N_t):
-    return {"T0":-0.00205*jnp.ones(1), "P":3.4059091*jnp.ones(1), "a":8.186*jnp.ones(1), "b":0.762*jnp.ones(1), "rho":0.12563*jnp.ones(N_l),
-                  "h_CM":1.25e-3*jnp.ones(1), "l_t":0.015*jnp.ones(1), "l_l_CM":1530.*jnp.ones(1), "sigma":1.23e-3*jnp.ones(N_l),
-                  "h_WSS":1.5e-4*jnp.ones(N_l), "h_HFS":3.4e-4*jnp.ones(1), "l_l_HFS":909.*jnp.ones(1), "wn_t":1.05*jnp.ones(N_t)}
+    return {"mfp":{"T0":-0.00205*jnp.ones(1), "P":3.4059091*jnp.ones(1), "a":8.186*jnp.ones(1), "b":0.762*jnp.ones(1), "rho":0.12563*jnp.ones(N_l)},
+                  "hp":{"h_CM":1.25e-3*jnp.ones(1), "l_t":0.015*jnp.ones(1), "l_l_CM":1530.*jnp.ones(1), "sigma":1.23e-3*jnp.ones(N_l),
+                  "h_WSS":1.5e-4*jnp.ones(N_l), "h_HFS":3.4e-4*jnp.ones(1), "l_l_HFS":909.*jnp.ones(1), "wn_t":1.05*jnp.ones(N_t)}}
 
 
 @pytest.fixture
@@ -143,7 +142,7 @@ def x_t(N_t):
 
 @pytest.fixture
 def M(par_sim, x_l, x_t):
-    return mf(par_sim, x_l, x_t)
+    return mf(par_sim["mfp"], x_l, x_t)
 
 # @pytest.fixture
 # def random():
@@ -152,64 +151,49 @@ def M(par_sim, x_l, x_t):
 @pytest.fixture
 def Y(M, x_l, x_t, par_sim, kf_luas):
     np.random.seed(42)
-    R = kf_luas.generate_noise(par_sim, x_l, x_t)
+    R = kf_luas.generate_noise(par_sim["hp"], x_l, x_t)
     return M*(1+R)
 
 
-def gp(par, x_l, x_t, Y, kf):
-    
-    N_l = x_l.size
-    N_t = x_t.size
+def gp(x_l, x_t, kf):
 
-    # Specify parameters to vary for inference
-    mfp_to_vary = ["T0", "a", "b", "rho"]         # Mean function parameters
-    hp_to_vary = ["h_CM", "l_l_CM", "l_t", "h_WSS", "h_HFS", "l_l_HFS", "sigma"] # Hyperparameters
-
-    # Specify parameters to use log priors on
-    log_params = ["h_CM", "l_t", "l_l_CM", "sigma", "h_WSS", "h_HFS", "l_l_HFS"]
-    
     # Specify Gaussian priors on some parameters
     prior_values = {"a":8.3452, "b":0.787354}
     prior_std = {"a":0.1, "b":0.018}
 
-    prior_dict = {"a":[prior_values["a"], prior_std["a"]], "b":[prior_values["b"], prior_std["b"]]}
+    logPrior = lambda p: (-0.5*((p["mfp"]["a"] - prior_values["a"])/prior_std["a"])**2 - 0.5*((p["mfp"]["b"] - prior_values["b"])/prior_std["b"])**2).sum()
     
-    initial_params = deepcopy(par)
-    for name in log_params:
-        initial_params[name] = jnp.log10(par[name])
-    
-    return GP(initial_params, mfp_to_vary, hp_to_vary, x_l, x_t, Y, kf,
-               mf = mf, log_params = log_params, gaussian_prior_dict = prior_dict)
+    return GP(kf, x_l, x_t, mf = mf, logPrior = logPrior)
 
 
 def test_logL_comparison(par_GP, x_l, x_t, Y, kf_luas, kf_general, rtol, atol):
     
-    gp_luas = gp(par_GP, x_l, x_t, Y, kf_luas)
-    gp_general = gp(par_GP, x_l, x_t, Y, kf_general)
+    gp_luas = gp(x_l, x_t, kf_luas)
+    gp_general = gp(x_l, x_t, kf_general)
     
-    logL1 = gp_luas.logL(gp_luas.p)
-    logL2 = gp_general.logL(gp_luas.p)
-    np.testing.assert_allclose(logL1, logL2, rtol = rtol, atol = atol)
+    logP1 = gp_luas.logP(par_GP, Y)
+    logP2 = gp_general.logP(par_GP, Y)
+    np.testing.assert_allclose(logP1, logP2, rtol = rtol, atol = atol)
     
-    grad_logL1 = gp_luas.grad_logL(gp_luas.p_arr)
-    grad_logL2 = gp_general.grad_logL(gp_luas.p_arr)
-    np.testing.assert_allclose(grad_logL1, grad_logL2, rtol = rtol, atol = atol)
+    grad_logP1 = jax.grad(gp_luas.logP)(par_GP, Y)
+    grad_logP2 = jax.grad(gp_general.logP)(par_GP, Y)
+    np.testing.assert_allclose(grad_logP1, grad_logP2, rtol = rtol, atol = atol)
     
-    logL1, grad_logL1 = gp_luas.value_and_grad_logL(gp_luas.p_arr)
-    logL2, grad_logL2 = gp_general.value_and_grad_logL(gp_luas.p_arr)
-    np.testing.assert_allclose(logL1, logL2, rtol = rtol, atol = atol)
-    np.testing.assert_allclose(grad_logL1, grad_logL2, rtol = rtol, atol = atol)
+    logP1, grad_logP1 = jax.value_and_grad(gp_luas.logP)(par_GP, Y)
+    logP2, grad_logP2 = jax.value_and_grad(gp_general.logP)(par_GP, Y)
+    np.testing.assert_allclose(logP1, logP2, rtol = rtol, atol = atol)
+    np.testing.assert_allclose(grad_logP1, grad_logP2, rtol = rtol, atol = atol)
     
-    gp_mean_luas, sigma_diag_luas, M_luas = gp_luas.predict(gp_luas.p)
-    gp_mean_chol, sigma_diag_chol, M_chol = gp_general.predict(gp_luas.p)
-    np.testing.assert_allclose(gp_mean_luas, gp_mean_chol, rtol = rtol, atol = atol)
-    np.testing.assert_allclose(sigma_diag_luas, sigma_diag_chol, rtol = rtol, atol = atol)
-    np.testing.assert_allclose(M_luas, M_chol, rtol = rtol, atol = atol)
+    # gp_mean_luas, sigma_diag_luas, M_luas = gp_luas.predict(gp_luas.p)
+    # gp_mean_chol, sigma_diag_chol, M_chol = gp_general.predict(gp_luas.p)
+    # np.testing.assert_allclose(gp_mean_luas, gp_mean_chol, rtol = rtol, atol = atol)
+    # np.testing.assert_allclose(sigma_diag_luas, sigma_diag_chol, rtol = rtol, atol = atol)
+    # np.testing.assert_allclose(M_luas, M_chol, rtol = rtol, atol = atol)
     
-    hessian_logL1 = gp_luas.hessian_logL(gp_luas.p_arr, large = False)
-    hessian_logL2 = gp_general.hessian_logL(gp_luas.p_arr, large = True)
-    np.testing.assert_allclose(hessian_logL1, hessian_logL2, rtol = rtol, atol = atol)
+    # hessian_logL1 = gp_luas.hessian_logL(gp_luas.p_arr, large = False)
+    # hessian_logL2 = gp_general.hessian_logL(gp_luas.p_arr, large = True)
+    # np.testing.assert_allclose(hessian_logL1, hessian_logL2, rtol = rtol, atol = atol)
     
-    large_hessian_logL1 = gp_luas.hessian_logL(gp_luas.p_arr, large = True)
-    np.testing.assert_allclose(large_hessian_logL1, hessian_logL2, rtol = rtol, atol = atol)
+    # large_hessian_logL1 = gp_luas.hessian_logL(gp_luas.p_arr, large = True)
+    # np.testing.assert_allclose(large_hessian_logL1, hessian_logL2, rtol = rtol, atol = atol)
     

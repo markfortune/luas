@@ -12,7 +12,7 @@ luas.exoplanet.sample\_kernels module
 luas.exoplanet.transit\_functions module
 ----------------------------------------
 
-.. automodule:: luas.exoplanet.transit_functions
+.. automodule:: luas.exoplanet.transit_fns
    :members:
    :undoc-members:
    :show-inheritance:

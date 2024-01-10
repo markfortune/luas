@@ -5,7 +5,7 @@ from abc import ABCMeta
 
 Scalar = Any
 Array = Any
-JAXArray = Union[np.ndarray, jnp.ndarray]
+JAXArray = jnp.ndarray
 PyTree = Any
 
 class Kernel(metaclass=ABCMeta):

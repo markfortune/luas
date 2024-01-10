@@ -9,14 +9,6 @@ luas.GPClass module
    :undoc-members:
    :show-inheritance:
 
-luas.GeneralKernel module
--------------------------
-
-.. automodule:: luas.GeneralKernel
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 luas.LuasKernel module
 ----------------------
 
@@ -25,6 +17,38 @@ luas.LuasKernel module
    :undoc-members:
    :show-inheritance:
 
+luas.GeneralKernel module
+-------------------------
+
+.. automodule:: luas.GeneralKernel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+luas.kernels module
+-----------------------------
+
+.. automodule:: luas.kernels
+   :members:
+   :undoc-members:
+   :show-inheritance:
+       
+luas.pymc\_ext module
+--------------------------------
+
+.. automodule:: luas.pymc_ext
+   :members:
+   :undoc-members:
+   :show-inheritance:
+       
+luas.numpyro\_ext module
+--------------------------------
+
+.. automodule:: luas.numpyro_ext
+   :members:
+   :undoc-members:
+   :show-inheritance:
+       
 luas.jax\_convenience\_fns module
 ---------------------------------
 
@@ -33,18 +57,10 @@ luas.jax\_convenience\_fns module
    :undoc-members:
    :show-inheritance:
 
-luas.kernel\_functions module
------------------------------
-
-.. automodule:: luas.kernel_functions
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-luas.kronecker\_functions module
+luas.kronecker\_fns module
 --------------------------------
 
-.. automodule:: luas.kronecker_functions
+.. automodule:: luas.kronecker_fns
    :members:
    :undoc-members:
    :show-inheritance:

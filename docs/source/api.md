@@ -7,7 +7,7 @@
 ## API Contents
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 3
 luas
 luas.exoplanet
 ```

@@ -115,30 +115,32 @@
   
   
   
-    
-    
-      
-    
-    
-    <img src="_static/luas_icon.png" class="logo__image only-light" alt="Logo image"/>
-    <script>document.write(`<img src="_static/luas_icon.png" class="logo__image only-dark" alt="Logo image"/>`);</script>
   
+    <p class="title logo__title">luas</p>
   
 </a></div>
         <div class="sidebar-primary-item"><nav class="bd-links" id="bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="index.html">
+                    luas
+                </a>
+            </li>
+        </ul>
         <ul class="nav bd-sidenav">
-<li class="toctree-l1 has-children"><a class="reference internal" href="getting_started.html">Getting Started</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="getting_started.html">Getting Started</a><input checked class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="when_to_use.html">When to Use Luas</a></li>
 <li class="toctree-l2"><a class="reference internal" href="things_to_know.html">Things to Know</a></li>
 <li class="toctree-l2"><a class="reference internal" href="installation.html">Installation</a></li>
 </ul>
 </li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="tutorials.html">Tutorials</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="tutorials.html">Tutorials</a><input checked class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="tutorials/numpy%20tutorial.html">An Introduction into 2D Gaussian Processes</a></li>
 </ul>
 </li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="api.html">API</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="api.html">API</a><input checked class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="luas.html">luas package</a></li>
 <li class="toctree-l2"><a class="reference internal" href="luas.exoplanet.html">luas.exoplanet package</a></li>
 </ul>
@@ -283,7 +285,7 @@ document.write(`
 <h2 id="A">A</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.jax_convenience_fns.array_to_pytree2D">array_to_pytree2D() (in module luas.jax_convenience_fns)</a>
+      <li><a href="luas.html#luas.jax_convenience_fns.array_to_pytree_2D">array_to_pytree_2D() (in module luas.jax_convenience_fns)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
@@ -299,8 +301,6 @@ document.write(`
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.build_storage_dict">build_storage_dict() (luas.GPClass.GP method)</a>
-</li>
       <li><a href="luas.exoplanet.html#luas.exoplanet.sample_kernels.build_VLT_kernel">build_VLT_kernel() (in module luas.exoplanet.sample_kernels)</a>
 </li>
   </ul></td>
@@ -309,27 +309,13 @@ document.write(`
 <h2 id="C">C</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.calc_mf">calc_mf() (luas.GPClass.GP method)</a>
-</li>
-      <li><a href="luas.html#luas.GPClass.GP.calc_residuals">calc_residuals() (luas.GPClass.GP method)</a>
-</li>
-      <li><a href="luas.html#luas.GPClass.GP.check_p_type">check_p_type() (luas.GPClass.GP method)</a>
-</li>
-      <li><a href="luas.html#luas.GPClass.GP.check_storage_dict">check_storage_dict() (luas.GPClass.GP method)</a>
-</li>
-      <li><a href="luas.html#luas.GeneralKernel.GeneralKernel.cholesky_decomp_no_stored_results">cholesky_decomp_no_stored_results() (luas.GeneralKernel.GeneralKernel method)</a>
+      <li><a href="luas.html#luas.GPClass.GP.calc_storage_dict">calc_storage_dict() (luas.GPClass.GP method)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.clip_outliers">clip_outliers() (luas.GPClass.GP method)</a>
+      <li><a href="luas.html#luas.GeneralKernel.GeneralKernel.cholesky_decomp_no_stored_results">cholesky_decomp_no_stored_results() (luas.GeneralKernel.GeneralKernel method)</a>
 </li>
-      <li><a href="luas.html#luas.LuasKernel.LuasKernel.compute_gradable_hp_logL">compute_gradable_hp_logL() (luas.LuasKernel.LuasKernel method)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.LuasKernel.compute_hessianable_hp_logL">compute_hessianable_hp_logL() (luas.LuasKernel.LuasKernel method)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.LuasKernel.compute_logL">compute_logL() (luas.LuasKernel.LuasKernel method)</a>
-</li>
-      <li><a href="luas.html#luas.kernel_functions.cosine_kernel">cosine_kernel() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.cosine">cosine() (in module luas.kernels)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -337,13 +323,13 @@ document.write(`
 <h2 id="D">D</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.default_param_transform">default_param_transform() (luas.GPClass.GP method)</a>
+      <li><a href="luas.html#luas.pymc_ext.LuasPyMCWrapper.default_output">default_output (luas.pymc_ext.LuasPyMCWrapper attribute)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.kernel_functions.distanceL1">distanceL1() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.distanceL1">distanceL1() (in module luas.kernels)</a>
 </li>
-      <li><a href="luas.html#luas.kernel_functions.distanceL2">distanceL2() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.distanceL2Sq">distanceL2Sq() (in module luas.kernels)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -351,27 +337,15 @@ document.write(`
 <h2 id="E">E</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.LuasKernel.eigendecomp_diag_K_tilde">eigendecomp_diag_K_tilde() (in module luas.LuasKernel)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.eigendecomp_diag_S">eigendecomp_diag_S() (in module luas.LuasKernel)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.eigendecomp_general_K_tilde">eigendecomp_general_K_tilde() (in module luas.LuasKernel)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.eigendecomp_general_S">eigendecomp_general_S() (in module luas.LuasKernel)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.eigendecomp_K_tilde">eigendecomp_K_tilde() (in module luas.LuasKernel)</a>
-</li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="luas.html#luas.LuasKernel.LuasKernel.eigendecomp_no_stored_results">eigendecomp_no_stored_results() (luas.LuasKernel.LuasKernel method)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.eigendecomp_S">eigendecomp_S() (in module luas.LuasKernel)</a>
 </li>
       <li><a href="luas.html#luas.LuasKernel.LuasKernel.eigendecomp_use_stored_results">eigendecomp_use_stored_results() (luas.LuasKernel.LuasKernel method)</a>
 </li>
-      <li><a href="luas.html#luas.kernel_functions.evaluate_kernel">evaluate_kernel() (in module luas.kernel_functions)</a>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="luas.html#luas.kernels.evaluate_kernel">evaluate_kernel() (in module luas.kernels)</a>
 </li>
-      <li><a href="luas.html#luas.kernel_functions.exp_sine_squared_kernel">exp_sine_squared_kernel() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.exp_sine_squared">exp_sine_squared() (in module luas.kernels)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -387,19 +361,13 @@ document.write(`
         <li><a href="luas.html#luas.LuasKernel.LuasKernel.generate_noise">(luas.LuasKernel.LuasKernel method)</a>
 </li>
       </ul></li>
-      <li><a href="luas.html#luas.GPClass.GP.get_cov">get_cov() (luas.GPClass.GP method)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="luas.html#luas.jax_convenience_fns.get_corr_mat">get_corr_mat() (in module luas.jax_convenience_fns)</a>
+</li>
       <li><a href="luas.html#luas.GPClass.GP">GP (class in luas.GPClass)</a>
 </li>
-      <li><a href="luas.html#luas.GPClass.GP.grad_logL">grad_logL() (luas.GPClass.GP method)</a>
-
-      <ul>
-        <li><a href="luas.html#luas.LuasKernel.LuasKernel.grad_logL">(luas.LuasKernel.LuasKernel method)</a>
-</li>
-      </ul></li>
-      <li><a href="luas.html#luas.GPClass.GP.grad_logP">grad_logP() (luas.GPClass.GP method)</a>
+      <li><a href="luas.html#luas.pymc_ext.LuasPyMCWrapper.grad">grad() (luas.pymc_ext.LuasPyMCWrapper method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -407,21 +375,7 @@ document.write(`
 <h2 id="H">H</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.hessian_logL">hessian_logL() (luas.GPClass.GP method)</a>
-
-      <ul>
-        <li><a href="luas.html#luas.LuasKernel.LuasKernel.hessian_logL">(luas.LuasKernel.LuasKernel method)</a>
-</li>
-      </ul></li>
-      <li><a href="luas.html#luas.GPClass.GP.hessian_logP">hessian_logP() (luas.GPClass.GP method)</a>
-</li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.hessian_to_covariance_mat">hessian_to_covariance_mat() (luas.GPClass.GP method)</a>
-</li>
-      <li><a href="luas.html#luas.GeneralKernel.GeneralKernel.hessian_wrapper_logL">hessian_wrapper_logL() (luas.GeneralKernel.GeneralKernel method)</a>
-</li>
-      <li><a href="luas.html#luas.LuasKernel.LuasKernel.hessianable_logL_wrapper">hessianable_logL_wrapper() (luas.LuasKernel.LuasKernel method)</a>
+      <li><a href="luas.html#luas.GPClass.GP.hessian_calc">hessian_calc() (luas.GPClass.GP method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -429,13 +383,13 @@ document.write(`
 <h2 id="K">K</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.sample_kernels.Kl_VLT">Kl_VLT() (in module luas.exoplanet.sample_kernels)</a>
+      <li><a href="luas.html#luas.LuasKernel.LuasKernel.K">K() (luas.LuasKernel.LuasKernel method)</a>
 </li>
-      <li><a href="luas.html#luas.kronecker_functions.kron_prod">kron_prod() (in module luas.kronecker_functions)</a>
+      <li><a href="luas.exoplanet.html#luas.exoplanet.sample_kernels.Kl_VLT">Kl_VLT() (in module luas.exoplanet.sample_kernels)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.kronecker_functions.kronecker_inv_vec">kronecker_inv_vec() (in module luas.kronecker_functions)</a>
+      <li><a href="luas.html#luas.kronecker_fns.kron_prod">kron_prod() (in module luas.kronecker_fns)</a>
 </li>
       <li><a href="luas.exoplanet.html#luas.exoplanet.sample_kernels.Kt_VLT">Kt_VLT() (in module luas.exoplanet.sample_kernels)</a>
 </li>
@@ -445,17 +399,17 @@ document.write(`
 <h2 id="L">L</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GeneralKernel.GeneralKernel.large_hessian_logL">large_hessian_logL() (luas.GeneralKernel.GeneralKernel method)</a>
-
-      <ul>
-        <li><a href="luas.html#luas.LuasKernel.LuasKernel.large_hessian_logL">(luas.LuasKernel.LuasKernel method)</a>
+      <li><a href="luas.html#luas.GPClass.GP.laplace_approx">laplace_approx() (luas.GPClass.GP method)</a>
 </li>
-      </ul></li>
-      <li><a href="luas.html#luas.LuasKernel.LuasKernel.large_hessian_wrapper">large_hessian_wrapper() (luas.LuasKernel.LuasKernel method)</a>
+      <li><a href="luas.html#luas.GPClass.GP.laplace_approx_with_bounds">laplace_approx_with_bounds() (luas.GPClass.GP method)</a>
 </li>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_functions.ld_from_kipping">ld_from_kipping() (in module luas.exoplanet.transit_functions)</a>
+      <li><a href="luas.html#luas.jax_convenience_fns.large_hessian_calc">large_hessian_calc() (in module luas.jax_convenience_fns)</a>
 </li>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_functions.ld_to_kipping">ld_to_kipping() (in module luas.exoplanet.transit_functions)</a>
+      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_fns.ld_from_kipping">ld_from_kipping() (in module luas.exoplanet.transit_fns)</a>
+</li>
+      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_fns.ld_to_kipping">ld_to_kipping() (in module luas.exoplanet.transit_fns)</a>
+</li>
+      <li><a href="luas.html#luas.numpyro_ext.LuasGP.log_prob">log_prob() (luas.numpyro_ext.LuasGP method)</a>
 </li>
       <li><a href="luas.html#luas.GeneralKernel.GeneralKernel.logL">logL() (luas.GeneralKernel.GeneralKernel method)</a>
 
@@ -465,7 +419,21 @@ document.write(`
         <li><a href="luas.html#luas.LuasKernel.LuasKernel.logL">(luas.LuasKernel.LuasKernel method)</a>
 </li>
       </ul></li>
+      <li><a href="luas.html#luas.GeneralKernel.GeneralKernel.logL_hessianable">logL_hessianable() (luas.GeneralKernel.GeneralKernel method)</a>
+
+      <ul>
+        <li><a href="luas.html#luas.GPClass.GP.logL_hessianable">(luas.GPClass.GP method)</a>
+</li>
+        <li><a href="luas.html#luas.LuasKernel.LuasKernel.logL_hessianable">(luas.LuasKernel.LuasKernel method)</a>
+</li>
+      </ul></li>
+      <li><a href="luas.html#luas.GPClass.GP.logL_stored">logL_stored() (luas.GPClass.GP method)</a>
+</li>
       <li><a href="luas.html#luas.GPClass.GP.logP">logP() (luas.GPClass.GP method)</a>
+</li>
+      <li><a href="luas.html#luas.GPClass.GP.logP_hessianable">logP_hessianable() (luas.GPClass.GP method)</a>
+</li>
+      <li><a href="luas.html#luas.GPClass.GP.logP_stored">logP_stored() (luas.GPClass.GP method)</a>
 </li>
       <li>
     luas
@@ -482,10 +450,10 @@ document.write(`
 </li>
       </ul></li>
       <li>
-    luas.exoplanet.transit_functions
+    luas.exoplanet.transit_fns
 
       <ul>
-        <li><a href="luas.exoplanet.html#module-luas.exoplanet.transit_functions">module</a>
+        <li><a href="luas.exoplanet.html#module-luas.exoplanet.transit_fns">module</a>
 </li>
       </ul></li>
   </ul></td>
@@ -512,17 +480,17 @@ document.write(`
 </li>
       </ul></li>
       <li>
-    luas.kernel_functions
+    luas.kernels
 
       <ul>
-        <li><a href="luas.html#module-luas.kernel_functions">module</a>
+        <li><a href="luas.html#module-luas.kernels">module</a>
 </li>
       </ul></li>
       <li>
-    luas.kronecker_functions
+    luas.kronecker_fns
 
       <ul>
-        <li><a href="luas.html#module-luas.kronecker_functions">module</a>
+        <li><a href="luas.html#module-luas.kronecker_fns">module</a>
 </li>
       </ul></li>
       <li>
@@ -532,7 +500,27 @@ document.write(`
         <li><a href="luas.html#module-luas.LuasKernel">module</a>
 </li>
       </ul></li>
+      <li>
+    luas.numpyro_ext
+
+      <ul>
+        <li><a href="luas.html#module-luas.numpyro_ext">module</a>
+</li>
+      </ul></li>
+      <li>
+    luas.pymc_ext
+
+      <ul>
+        <li><a href="luas.html#module-luas.pymc_ext">module</a>
+</li>
+      </ul></li>
+      <li><a href="luas.html#luas.numpyro_ext.LuasGP">LuasGP (class in luas.numpyro_ext)</a>
+</li>
+      <li><a href="luas.html#luas.pymc_ext.LuasGP">LuasGP() (in module luas.pymc_ext)</a>
+</li>
       <li><a href="luas.html#luas.LuasKernel.LuasKernel">LuasKernel (class in luas.LuasKernel)</a>
+</li>
+      <li><a href="luas.html#luas.pymc_ext.LuasPyMCWrapper">LuasPyMCWrapper (class in luas.pymc_ext)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -540,15 +528,15 @@ document.write(`
 <h2 id="M">M</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.make_logPrior">make_logPrior() (luas.GPClass.GP method)</a>
+      <li><a href="luas.html#luas.kronecker_fns.make_mat">make_mat() (in module luas.kronecker_fns)</a>
 </li>
-      <li><a href="luas.html#luas.kronecker_functions.make_mat">make_mat() (in module luas.kronecker_functions)</a>
+      <li><a href="luas.html#luas.pymc_ext.LuasPyMCWrapper.make_node">make_node() (luas.pymc_ext.LuasPyMCWrapper method)</a>
 </li>
-      <li><a href="luas.html#luas.kronecker_functions.make_vec">make_vec() (in module luas.kronecker_functions)</a>
+      <li><a href="luas.html#luas.kronecker_fns.make_vec">make_vec() (in module luas.kronecker_fns)</a>
 </li>
-      <li><a href="luas.html#luas.kernel_functions.matern32_kernel">matern32_kernel() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.matern32">matern32() (in module luas.kernels)</a>
 </li>
-      <li><a href="luas.html#luas.kernel_functions.matern52_kernel">matern52_kernel() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.matern52">matern52() (in module luas.kernels)</a>
 </li>
       <li>
     module
@@ -558,7 +546,7 @@ document.write(`
 </li>
         <li><a href="luas.exoplanet.html#module-luas.exoplanet.sample_kernels">luas.exoplanet.sample_kernels</a>
 </li>
-        <li><a href="luas.exoplanet.html#module-luas.exoplanet.transit_functions">luas.exoplanet.transit_functions</a>
+        <li><a href="luas.exoplanet.html#module-luas.exoplanet.transit_fns">luas.exoplanet.transit_fns</a>
 </li>
         <li><a href="luas.html#module-luas.GeneralKernel">luas.GeneralKernel</a>
 </li>
@@ -566,11 +554,15 @@ document.write(`
 </li>
         <li><a href="luas.html#module-luas.jax_convenience_fns">luas.jax_convenience_fns</a>
 </li>
-        <li><a href="luas.html#module-luas.kernel_functions">luas.kernel_functions</a>
+        <li><a href="luas.html#module-luas.kernels">luas.kernels</a>
 </li>
-        <li><a href="luas.html#module-luas.kronecker_functions">luas.kronecker_functions</a>
+        <li><a href="luas.html#module-luas.kronecker_fns">luas.kronecker_fns</a>
 </li>
         <li><a href="luas.html#module-luas.LuasKernel">luas.LuasKernel</a>
+</li>
+        <li><a href="luas.html#module-luas.numpyro_ext">luas.numpyro_ext</a>
+</li>
+        <li><a href="luas.html#module-luas.pymc_ext">luas.pymc_ext</a>
 </li>
       </ul></li>
   </ul></td>
@@ -578,6 +570,10 @@ document.write(`
 
 <h2 id="O">O</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="luas.html#luas.jax_convenience_fns.order_dict">order_dict() (in module luas.jax_convenience_fns)</a>
+</li>
+  </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="luas.html#luas.jax_convenience_fns.order_list">order_list() (in module luas.jax_convenience_fns)</a>
 </li>
@@ -587,8 +583,14 @@ document.write(`
 <h2 id="P">P</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="luas.html#luas.pymc_ext.LuasPyMCWrapper.perform">perform() (luas.pymc_ext.LuasPyMCWrapper method)</a>
+</li>
       <li><a href="luas.html#luas.GPClass.GP.plot">plot() (luas.GPClass.GP method)</a>
 </li>
+      <li><a href="luas.html#luas.GPClass.GP.plot_K">plot_K() (luas.GPClass.GP method)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="luas.html#luas.GeneralKernel.GeneralKernel.predict">predict() (luas.GeneralKernel.GeneralKernel method)</a>
 
       <ul>
@@ -597,9 +599,7 @@ document.write(`
         <li><a href="luas.html#luas.LuasKernel.LuasKernel.predict">(luas.LuasKernel.LuasKernel method)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.jax_convenience_fns.pytree2D_to_array">pytree2D_to_array() (in module luas.jax_convenience_fns)</a>
+      <li><a href="luas.html#luas.jax_convenience_fns.pytree_to_array_2D">pytree_to_array_2D() (in module luas.jax_convenience_fns)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -607,7 +607,7 @@ document.write(`
 <h2 id="R">R</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.kernel_functions.rational_quadratic_kernel">rational_quadratic_kernel() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.rational_quadratic">rational_quadratic() (in module luas.kernels)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -615,13 +615,19 @@ document.write(`
 <h2 id="S">S</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="luas.html#luas.GPClass.GP.sigma_clip">sigma_clip() (luas.GPClass.GP method)</a>
+</li>
+      <li><a href="luas.html#luas.jax_convenience_fns.sigmoid">sigmoid() (in module luas.jax_convenience_fns)</a>
+</li>
       <li><a href="luas.exoplanet.html#luas.exoplanet.sample_kernels.Sl_VLT">Sl_VLT() (in module luas.exoplanet.sample_kernels)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.kernel_functions.squared_exp_kernel">squared_exp_kernel() (in module luas.kernel_functions)</a>
+      <li><a href="luas.html#luas.kernels.squared_exp">squared_exp() (in module luas.kernels)</a>
 </li>
       <li><a href="luas.exoplanet.html#luas.exoplanet.sample_kernels.St_VLT">St_VLT() (in module luas.exoplanet.sample_kernels)</a>
+</li>
+      <li><a href="luas.html#luas.numpyro_ext.LuasGP.support">support() (luas.numpyro_ext.LuasGP method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -629,17 +635,19 @@ document.write(`
 <h2 id="T">T</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_functions.transit_2D">transit_2D() (in module luas.exoplanet.transit_functions)</a>
+      <li><a href="luas.html#luas.jax_convenience_fns.transf_from_unbounded_params">transf_from_unbounded_params() (in module luas.jax_convenience_fns)</a>
 </li>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_functions.transit_2D_multi_x_t">transit_2D_multi_x_t() (in module luas.exoplanet.transit_functions)</a>
+      <li><a href="luas.html#luas.jax_convenience_fns.transf_to_unbounded_params">transf_to_unbounded_params() (in module luas.jax_convenience_fns)</a>
+</li>
+      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_fns.transit_2D">transit_2D() (in module luas.exoplanet.transit_fns)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_functions.transit_light_curve">transit_light_curve() (in module luas.exoplanet.transit_functions)</a>
+      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_fns.transit_2D_interp">transit_2D_interp() (in module luas.exoplanet.transit_fns)</a>
 </li>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_functions.transit_light_curve_vmap">transit_light_curve_vmap() (in module luas.exoplanet.transit_functions)</a>
+      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_fns.transit_light_curve">transit_light_curve() (in module luas.exoplanet.transit_fns)</a>
 </li>
-      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_functions.transit_param_transform">transit_param_transform() (in module luas.exoplanet.transit_functions)</a>
+      <li><a href="luas.exoplanet.html#luas.exoplanet.transit_fns.transit_light_curve_vmap">transit_light_curve_vmap() (in module luas.exoplanet.transit_fns)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -647,15 +655,7 @@ document.write(`
 <h2 id="V">V</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.value_and_grad_logL">value_and_grad_logL() (luas.GPClass.GP method)</a>
-
-      <ul>
-        <li><a href="luas.html#luas.LuasKernel.LuasKernel.value_and_grad_logL">(luas.LuasKernel.LuasKernel method)</a>
-</li>
-      </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="luas.html#luas.GPClass.GP.value_and_grad_logP">value_and_grad_logP() (luas.GPClass.GP method)</a>
+      <li><a href="luas.html#luas.GPClass.GP.varying_params_wrapper">varying_params_wrapper() (luas.GPClass.GP method)</a>
 </li>
   </ul></td>
 </tr></table>
