@@ -28,7 +28,7 @@ jax.config.update("jax_enable_x64", True)
 
 class GP(object):
     """GP class using the Kronecker product structure of the covariance matrix to extend GPs to
-    2D regular structures relatively cheaply.
+    2D regular structures relatively cheaply. 
     
     Must be two input dimensions, and each are treated independently to create a kernel in
     each dimension. These are then combined with the sum of two Kronecker products to produce
