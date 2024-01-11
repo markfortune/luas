@@ -1,0 +1,30 @@
+[project]
+name = "luas"
+description = "A library for implementing efficient 2D Gaussian processes"
+authors = [{ name = "Mark Fortune", email = "fortunma@tcd.ie" }]
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+dynamic = ["version"]
+dependencies = ["jax", "jaxlib", "numpy"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+docs = [
+    "sphinx-book-theme",
+    "myst-nb",
+    "matplotlib",
+    "jaxoplanet",
+    "tqdm",
+    "numpyro",
+    "pymc",
+]

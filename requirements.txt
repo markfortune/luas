@@ -1,7 +1,1 @@
-myst-nb
-sphinx-book-theme
-jax
-numpy
-tqdm
-matplotlib
-jaxoplanet
+.[docs]
