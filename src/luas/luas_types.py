@@ -3,6 +3,13 @@ import numpy as np
 import jax.numpy as jnp
 from abc import ABCMeta
 
+__all__ = [
+    "JAXArray",
+    "Scalar",
+    "Array",
+    "PyTree",
+]
+
 Scalar = Any
 Array = Any
 JAXArray = jnp.ndarray

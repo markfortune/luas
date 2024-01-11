@@ -57,7 +57,4 @@ html_theme_options = {
 }
 nb_execution_mode = "auto"
 nb_execution_timeout = 60
-
-autodoc_type_aliases = {
-    "JAXArray": "luas.luas_types.JAXArray",
-}
+nb_merge_streams = True
