@@ -64,3 +64,11 @@ luas.kronecker\_fns module
    :members:
    :undoc-members:
    :show-inheritance:
+
+luas.test\_comment module
+--------------------------------
+
+.. automodule:: luas.test_comment
+   :members:
+   :undoc-members:
+   :show-inheritance:
