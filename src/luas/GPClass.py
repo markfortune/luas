@@ -19,7 +19,6 @@ from .jax_convenience_fns import (
 from typing import Any, Optional, Callable, Union, Dict, Tuple
 from .luas_types import Scalar, PyTree, JAXArray, Kernel
 
-
 __all__ = ["GP"]
 
 # Ensure we are using double precision floats as JAX uses single precision by default

@@ -17,7 +17,6 @@ else:
 
 __all__ = [
     "LuasGP",
-    "LuasPyMCWrapper",
 ]
 
 def LuasGP(name, gp = None, var_dict = None, start = None, Y = None, jit = True):
@@ -63,11 +62,13 @@ class LuasPyMCWrapper(Op):
         return Apply(self, inputs, outputs)
 
     def perform(self, node, inputs, outputs):
+        
         (result, self.storage_dict), grad_result = self.v_and_g_logP(*inputs, self.storage_dict)
         outputs[0][0] = np.asarray(result, dtype=node.outputs[0].dtype)
         outputs[1][0] = np.asarray(grad_result, dtype=node.outputs[1].dtype)
 
     def grad(self, inputs, output_gradients):
+        
         # The `Op` computes its own gradients, so we call it again.
         value = self(*inputs)
         

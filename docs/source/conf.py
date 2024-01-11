@@ -55,4 +55,9 @@ html_theme_options = {
     "use_repository_button": True,
     "use_download_button": True,
 }
-nb_execution_mode = "off"
+nb_execution_mode = "auto"
+nb_execution_timeout = 60
+
+autodoc_type_aliases = {
+    "JAXArray": "luas.luas_types.JAXArray",
+}
