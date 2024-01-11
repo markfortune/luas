@@ -345,13 +345,11 @@ class GP(object):
         self,
         p: PyTree,
         Y: PyTree,
-        regularise: Optional[bool] = False,
-        regularise_sigma: Optional[Scalar] = 0.1,
+        regularise: Optional[bool] = True,
+        regularise_const: Optional[Scalar] = 100.,
         fn = None,
         return_array = False,
         large = False,
-        select_vars = [],
-        exclude_vars = [],
         hessian_array = None,
     ) -> PyTree:
 
@@ -367,7 +365,9 @@ class GP(object):
         if regularise:
             cov_diag = jnp.diag(cov_mat)
             neg_ind = cov_diag < 0.
-            regularise_vec = -0.5*(1/regularise_sigma**2)*neg_ind
+            num_neg_diag_vals = neg_ind.sum()
+            
+            regularise_vec = -regularise_const*neg_ind
             hessian_array += jnp.diag(regularise_vec)
             cov_mat = jnp.linalg.inv(-hessian_array)
 
@@ -377,25 +377,14 @@ class GP(object):
             for par in p.keys():
                 if not jnp.any(regularised_values[par]):
                     del regularised_values[par]
+            
+            cov_diag = jnp.diag(cov_mat)
+            neg_ind = cov_diag < 0.
+            num_neg_diag_vals_remaining = neg_ind.sum()
                     
-            print(f"Regularised locations where a {regularise_sigma} prior sigma was added: ", regularised_values)
+            print(f"Initial number of negative values on diagonal of covariance matrix = {num_neg_diag_vals}\nCorresponding to parameters: {regularised_values}.\nRemaining number of negative values = {num_neg_diag_vals_remaining}.")
 
-        if select_vars or exclude_vars:
-            if exclude_vars:
-                select_vars = [par for par in p.keys() if par not in exclude_vars]
-                
-            ordered_param_list = order_list(select_vars)
-            p_arr, make_p_dict = ravel_pytree(p)
-            coord_dict = make_p_dict(jnp.arange(p_arr.size))
-
-            coord_list = []
-            for par_name in ordered_param_list:
-                coord_list.append(coord_dict[par_name])
-            coords = jnp.concatenate(coord_list)
-
-            cov_mat = cov_mat[jnp.ix_(coords, coords)]
-        else:
-            ordered_param_list = order_list(list(p.keys()))
+        ordered_param_list = order_list(list(p.keys()))
         
         if return_array:
             return cov_mat, ordered_param_list
@@ -425,17 +414,16 @@ class GP(object):
     
     
     def laplace_approx_with_bounds(self, p, Y, param_bounds, vars = None, fixed_vars = None, fn = None, large = False, **kwargs):
-        ## Note assumes logPrior has no cross mfp hp terms
-        
+
         if fn is None:
             fn = self.logP_hessianable
         
         p_fit, make_p = self.varying_params_wrapper(p, vars = vars, fixed_vars = fixed_vars)
         p_fixed = deepcopy(p)
         
-        p_transf = self.transf_to_unbounded_params(p_fit, param_bounds)
+        p_transf = transf_to_unbounded_params(p_fit, param_bounds)
         def transf_back_to_p(p_transf):
-            p_fit = self.transf_from_unbounded_params(p_transf, param_bounds)
+            p_fit = transf_from_unbounded_params(p_transf, param_bounds)
             p_fixed.update(p_fit)
             return p_fixed
 

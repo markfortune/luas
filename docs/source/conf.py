@@ -27,7 +27,7 @@ extensions = [
     "myst_nb",
     "IPython.sphinxext.ipython_console_highlighting",
 ]
-myst_enable_extensions = ["dollarmath"]
+myst_enable_extensions = ["dollarmath", "colon_fence"]
 templates_path = ['_templates']
 exclude_patterns = []
 
@@ -58,3 +58,4 @@ html_theme_options = {
 nb_execution_mode = "auto"
 nb_execution_timeout = 60
 nb_merge_streams = True
+nb_execution_excludepatterns = ["Numpyro Example.ipynb", "PyMC Example.ipynb"]

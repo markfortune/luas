@@ -140,6 +140,8 @@
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="tutorials.html">Tutorials</a><input checked class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="tutorials/numpy%20tutorial.html">An Introduction into 2D Gaussian Processes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/Numpyro%20Example.html">An Introduction into NumPyro</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/PyMC%20Example.html">An Introduction into PyMC</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="api.html">API</a><input checked class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
@@ -324,31 +326,40 @@ document.write(`
   <section class="tex2jax_ignore mathjax_ignore" id="luas">
 <span id="index"></span><h1>luas<a class="headerlink" href="#luas" title="Permalink to this heading">#</a></h1>
 <p>‘luas’ is a small library aimed at building Gaussian processes (GPs) primarily for two-dimensional data sets. It contains an implementation of the methods described in Fortune et al. <em>in review</em> to efficiently calculate the log-likelihood and it’s derivatives for kronecker structured covariance matrices when the input data lies on a (potentially non-uniform) grid. The particular optimisation used was originally introduced in Rakitsch et al. 2013 and can perform exact inference for any covariance matrix which is the sum of two kronecker products of covariance matrices for each dimension. It is a generalisation of the more widely-used method introduced in Saatchi 2011 which can only perform exact inference on multi-dimensional data sets when the white noise in the data is uniform.</p>
-<p>:::{note}
-This package has been implemented using <a class="reference external" href="https://github.com/google/jax"><code class="docutils literal notranslate"><span class="pre">jax</span></code></a>, which helps to calculate derivatives of the log-likelihood as well as allowing the same code to be run on either a CPU or a GPU. The code is designed to be easily combined with PyMC (versions &gt;=4) to make use of gradient-based inference methods such as No U-Turn Sampling, allowing for fast inference with large numbers of parameters.
-:::</p>
-<p>:::{note}
-This documentation and the examples below are written with MyST Markdown, a form
-of markdown that works with Sphinx. For more information about MyST markdown, and
-to use MyST markdown with your Sphinx website,
-see <a class="reference external" href="https://myst-parser.readthedocs.io/">the MyST-parser documentation</a>
-:::</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This package has been implemented using <a class="reference external" href="https://github.com/google/jax"><code class="docutils literal notranslate"><span class="pre">jax</span></code></a>, which helps to calculate derivatives of the log-likelihood as well as allowing the same code to be run on either a CPU or a GPU.</p>
+</div>
 <p>This package was originally developed for use in fitting systematics in transiting exoplanet spectroscopy where the two-dimensional data sets are across wavelength and time. While the tutorials included mainly focus on this use case, the luas package itself has been written to be a general-purpose 2D GP package which could have broad applications for interpolation and inference on many large 2D data sets. The ‘luas.exoplanet’ submodule has however been included to help get people using the module for exoplanet spectroscopy started - which uses <a class="reference external" href="https://github.com/exoplanet-dev/jaxoplanet"><code class="docutils literal notranslate"><span class="pre">jaxoplanet</span></code></a> as a backend for transit modelling - but this is not a dependency for the rest of the ‘luas’ module.</p>
 <section id="where-to-get-started">
 <h2>Where to get started<a class="headerlink" href="#where-to-get-started" title="Permalink to this heading">#</a></h2>
 <div class="toctree-wrapper compound">
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="getting_started.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="getting_started.html#table-of-contents">Table of Contents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="when_to_use.html">When to Use Luas</a></li>
+<li class="toctree-l3"><a class="reference internal" href="things_to_know.html">Things to Know</a></li>
+<li class="toctree-l3"><a class="reference internal" href="installation.html">Installation</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started.html#license-and-citing">License and Citing</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="tutorials.html">Tutorials</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="tutorials.html#introductory-topics">Introductory Topics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials.html#introductory-topics">Introductory Topics</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="tutorials/numpy%20tutorial.html">An Introduction into 2D Gaussian Processes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="tutorials/Numpyro%20Example.html">An Introduction into NumPyro</a></li>
+<li class="toctree-l3"><a class="reference internal" href="tutorials/PyMC%20Example.html">An Introduction into PyMC</a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="api.html#api-contents">API Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api.html#api-contents">API Contents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="luas.html">luas package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="luas.exoplanet.html">luas.exoplanet package</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>

@@ -10,4 +10,6 @@ Included below are tutorials introducing Gaussian processes and their extension 
 :maxdepth: 1
 
 tutorials/numpy tutorial
+tutorials/Numpyro Example
+tutorials/PyMC Example
 ```

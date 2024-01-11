@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from tqdm import tqdm
+from copy import deepcopy
 from typing import Callable, Optional, Tuple
 from .luas_types import PyTree, JAXArray
 
@@ -130,7 +131,7 @@ def transf_from_unbounded(x, bounds):
     return sigmoid_x * (bounds[1] - bounds[0]) + bounds[0]
 
 
-def transf_to_unbounded_params(self, p, param_bounds):
+def transf_to_unbounded_params(p, param_bounds):
         p_pymc = deepcopy(p)
 
         for par in param_bounds.keys():
@@ -140,7 +141,7 @@ def transf_to_unbounded_params(self, p, param_bounds):
         return p_pymc
 
 
-def transf_from_unbounded_params(self, p_pymc, param_bounds):
+def transf_from_unbounded_params(p_pymc, param_bounds):
     p = deepcopy(p_pymc)
 
     for par in param_bounds.keys():
