@@ -8,6 +8,7 @@ __all__ = [
     "distanceL1",
     "distanceL2Sq",
     "squared_exp",
+    "matern12",
     "matern32",
     "matern52",
     "rational_quadratic",
@@ -98,6 +99,34 @@ def squared_exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     tau_sq = distanceL2Sq(x, y, L)
     return jnp.exp(-0.5 * tau_sq.sum())
 
+
+def exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
+    r"""Exponential kernel function, used with evaluate_kernel
+    to build covariance matrices.
+    
+    .. math::
+
+        k(x, y) = \Bigg(\frac{|x - y|}{L}\Bigg)
+    
+    Args:
+        x (JAXArray): Input vector 1
+        y (JAXArray): Input vector 2
+        L (Scalar): Length scale
+        
+    Returns:
+        Scalar: Covariance between two input vectors
+    """
+    
+    return evaluate_kernel(exp_calc, x, y, L)
+
+
+def exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
+    """Function used by exp to evaluate the Exponential kernel function. 
+    """
+
+    delta_t = distanceL1(x, y, L).sum()
+    return jnp.exp(-delta_t)
+   
 
 def matern32(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     r"""Matern 3/2 kernel function, used with evaluate_kernel

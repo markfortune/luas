@@ -347,17 +347,29 @@ class GP(object):
         Y: PyTree,
         regularise: Optional[bool] = True,
         regularise_const: Optional[Scalar] = 100.,
+        vars = None,
+        fixed_vars = None, 
         fn = None,
         return_array = False,
         large = False,
         hessian_array = None,
     ) -> PyTree:
 
-        if fn is None:
-            fn = self.logP_hessianable
+        p_fit, make_p = self.varying_params_wrapper(p, vars = vars, fixed_vars = fixed_vars)
 
         if hessian_array is None:
-            hessian_array = self.hessian_calc(p, Y, fn = fn, return_array = True, large = large)
+            if fn is None:
+                fn = self.logP_hessianable
+            
+            p_fixed = deepcopy(p)
+
+            def transf_back_to_p(p_fit):
+                p_fixed.update(p_fit)
+                return p_fixed
+
+            logP_hessianable_wrapper = lambda p_fit, Y: fn(transf_back_to_p(p_fit), Y)
+        
+            hessian_array = self.hessian_calc(p_fit, Y, fn = logP_hessianable_wrapper, return_array = True, large = large)
         
         hessian_array = (hessian_array + hessian_array.T)/2.
         cov_mat = jnp.linalg.inv(-hessian_array)
@@ -371,7 +383,7 @@ class GP(object):
             hessian_array += jnp.diag(regularise_vec)
             cov_mat = jnp.linalg.inv(-hessian_array)
 
-            p_arr, make_p_dict = ravel_pytree(p)
+            p_arr, make_p_dict = ravel_pytree(p_fit)
             regularised_values = make_p_dict(neg_ind)
             
             for par in p.keys():

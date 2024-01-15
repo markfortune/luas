@@ -3,10 +3,10 @@ from numpyro.distributions.util import promote_shapes, validate_sample
 from jax import lax
 
 __all__ = [
-    "LuasGP",
+    "LuasNumPyro",
 ]
 
-class LuasGP(dist.Distribution):
+class LuasNumPyro(dist.Distribution):
     """Custom NumPyro distribution which allows a luas.GPClass.GP object to be used with
     NumPyro.
     
@@ -22,21 +22,21 @@ class LuasGP(dist.Distribution):
     def __init__(
         self,
         gp=None, 
-        p=None,
+        var_dict=None,
+        likelihood_fn=None,
         validate_args=None,
-        hessian=False
     ):
         
         self.gp = gp
-        self.p = p
+        self.p = var_dict
         
         # If using NumPyro functionality which makes use of the hessian of the log likelihood
         # (i.e. numpyro.infer.autoguide.AutoLaplaceApproximation) then hessian might need to be set to true
         # as the default log likelihood is faster but not as numerically stable for second order derivatives.
-        if hessian:
-            self.logP_fn = self.gp.logP_hessianable
-        else:
+        if likelihood_fn is None:
             self.logP_fn = self.gp.logP
+        else:
+            self.logP_fn = likelihood_fn
         
         super().__init__(
             batch_shape = (),

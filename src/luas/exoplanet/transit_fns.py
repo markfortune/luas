@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 from jaxoplanet.orbits import KeplerianOrbit
 from jaxoplanet.light_curves import QuadLightCurve
-from copy import deepcopy
 from typing import Tuple
 from ..luas_types import PyTree, JAXArray
 
@@ -21,7 +20,6 @@ def ld_from_kipping(q1: JAXArray, q2: JAXArray) -> Tuple[JAXArray, JAXArray]:
     c1 = 2*q1_sqrt*q2
     c2 = q1_sqrt - c1
     return c1, c2
-
 
 
 def transit_light_curve(mfp: PyTree, x_t: JAXArray) -> JAXArray:
@@ -47,21 +45,5 @@ def transit_2D(p: PyTree, x_l: JAXArray, x_t: JAXArray) -> JAXArray:
     mfp = {k:p[k] for k in transit_params}
     mfp["rho"] = jnp.sqrt(p["d"])
     mfp["c1"], mfp["c2"] = ld_from_kipping(p["u1"], p["u2"])
-    
-    return transit_light_curve_vmap(mfp, x_t)
-
-
-def transit_2D_interp(p: PyTree, x_l: JAXArray, x_l_s, x_t: JAXArray) -> JAXArray:
-    transit_params = ["T0", "P", "a", "b", "Foot", "Tgrad"]
-
-    mfp = {k:p[k] for k in transit_params}
-    mfp["rho"] = jnp.sqrt(p["d"])
-    mfp["c1"], mfp["c2"] = ld_from_kipping(p["u1"], p["u2"])
-
-    mfp["rho"] = jnp.interp(x_l_s, x_l, mfp["rho"])
-    mfp["c1"] = jnp.interp(x_l_s, x_l, mfp["c1"])
-    mfp["c2"] = jnp.interp(x_l_s, x_l, mfp["c2"])
-    mfp["Foot"] = jnp.interp(x_l_s, x_l, mfp["Foot"])
-    mfp["Tgrad"] = jnp.interp(x_l_s, x_l, mfp["Tgrad"])
     
     return transit_light_curve_vmap(mfp, x_t)

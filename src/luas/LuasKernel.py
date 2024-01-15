@@ -35,18 +35,18 @@ def diag_eigendecomp(K):
 def decomp_S(S: JAXArray, eigen_fn: Optional[Callable] = jnp.linalg.eigh) -> Tuple[JAXArray, JAXArray]:
 
     lam_S, Q_S = eigen_fn(S)
-    Q_L_neg_half_S = Q_S @ jnp.diag(jnp.sqrt(jnp.reciprocal(lam_S)))
+    S_inv_sqrt = Q_S @ jnp.diag(jnp.sqrt(jnp.reciprocal(lam_S)))
 
-    return lam_S, Q_L_neg_half_S
+    return lam_S, S_inv_sqrt
         
     
-def decomp_K_tilde(K: JAXArray, Q_L_neg_half_S: JAXArray, eigen_fn: Optional[Callable] = jnp.linalg.eigh) -> Tuple[JAXArray, JAXArray]:
+def decomp_K_tilde(K: JAXArray, S_inv_sqrt: JAXArray, eigen_fn: Optional[Callable] = jnp.linalg.eigh) -> Tuple[JAXArray, JAXArray]:
         
-        K_tilde = Q_L_neg_half_S.T @ K @ Q_L_neg_half_S
-        lam_K_tilde, Q_K_tilde = eigen_fn(K_tilde)
-        W_K_tilde = Q_L_neg_half_S @ Q_K_tilde
-        
-        return lam_K_tilde, W_K_tilde
+    K_tilde = S_inv_sqrt.T @ K @ S_inv_sqrt
+    lam_K_tilde, Q_K_tilde = eigen_fn(K_tilde)
+    W_K_tilde = S_inv_sqrt @ Q_K_tilde
+
+    return lam_K_tilde, W_K_tilde
 
 
 class LuasKernel(Kernel):
@@ -69,40 +69,25 @@ class LuasKernel(Kernel):
         else:
             self.decomp_fn = self.eigendecomp_no_stored_results
 
-        
-        if hasattr(Sl_fn, "decomp"):
-            if Sl_fn.decomp == "diag":
-                self.Sl.decomp = diag_eigendecomp
-        else:
-            self.Sl.decomp = jnp.linalg.eigh
-
-        if hasattr(Kl_fn, "decomp"):
-            if Kl_fn.decomp == "diag":
-                if hasattr(Sl_fn, "decomp") and Sl_fn.decomp == "diag":
-                    self.Kl.decomp = diag_eigendecomp
-                else:
-                    raise Exception("Make sure to specify that Sl is diagonal if Kl_tilde is meant to be diagonal!") 
-        else:
-            self.Kl.decomp = jnp.linalg.eigh
-        
-        if hasattr(St_fn, "decomp") and St_fn.decomp == "diag":
-            self.St.decomp = diag_eigendecomp
-        else:
-            self.St.decomp = jnp.linalg.eigh
-
-        if hasattr(Kt_fn, "decomp"):
-            if Kt_fn.decomp == "diag":
-                if hasattr(St_fn, "decomp") and St_fn.decomp == "diag":
-                    self.Kt.decomp = diag_eigendecomp
-                else:
-                    raise Exception("Make sure to specify that Sl is diagonal if Kl_tilde is meant to be diagonal!") 
-        else:
-            self.Kt.decomp = jnp.linalg.eigh
+        decomp_dict = {}
+        for fn in [self.Sl, self.St, self.Kl, self.Kt]:
+            if hasattr(fn, "decomp"):
+                if fn.decomp == "diag":
+                    fn.decomp = diag_eigendecomp
+                    decomp_dict[fn] = "diag"
+            else:
+                fn.decomp = jnp.linalg.eigh
+                decomp_dict[fn] = "general"
                 
+        if decomp_dict[self.Kl] == "diag" and not decomp_dict[self.Sl] == "diag":
+            raise Warning("The transformation of Kl is set to be diagonal but the matrix Sl is not set to diagonal. This may be possible for example if Kl is a scalar times the identity matrix or Kl shares the same eigenvectors as Sl but it is not true if Kl is any general diagonal matrix. Alternatively perhaps Sl is also diagonal and you forgot to add Sl.decomp = 'diag'. Be careful to ensure the transformation of Kl is diagonal or else log likelihood values will be incorrect!")
+        if decomp_dict[self.Kt] == "diag" and not decomp_dict[self.St] == "diag":
+            raise Warning("The transformation of Kt is set to be diagonal but the matrix St is not set to diagonal. This may be possible for example if Kt is a scalar times the identity matrix or Kt shares the same eigenvectors as St but it is not true if Kt is any general diagonal matrix. Alternatively perhaps St is also diagonal and you forgot to add St.decomp = 'diag'. Be careful to ensure the transformation of Kt is diagonal or else log likelihood values will be incorrect!")
+
         self.Sl_decomp_fn = lambda Sl: decomp_S(Sl, eigen_fn = self.Sl.decomp)
         self.St_decomp_fn = lambda St: decomp_S(St, eigen_fn = self.St.decomp)
-        self.Kl_tilde_decomp_fn = lambda Kl, Q_L_neg_half_S: decomp_K_tilde(Kl, Q_L_neg_half_S, eigen_fn = self.Kl.decomp)
-        self.Kt_tilde_decomp_fn = lambda Kt, Q_L_neg_half_S: decomp_K_tilde(Kt, Q_L_neg_half_S, eigen_fn = self.Kt.decomp)
+        self.Kl_tilde_decomp_fn = lambda Kl, Sl_inv_sqrt: decomp_K_tilde(Kl, Sl_inv_sqrt, eigen_fn = self.Kl.decomp)
+        self.Kt_tilde_decomp_fn = lambda Kt, St_inv_sqrt: decomp_K_tilde(Kt, St_inv_sqrt, eigen_fn = self.Kt.decomp)
 
     
     def eigendecomp_no_stored_results(
@@ -115,16 +100,16 @@ class LuasKernel(Kernel):
 
             
         storage_dict["Sl"] = self.Sl(hp, x_l, x_l)
-        storage_dict["lam_Sl"], storage_dict["Q_L_neg_half_Sl"] = self.Sl_decomp_fn(storage_dict["Sl"])
+        storage_dict["lam_Sl"], storage_dict["Sl_inv_sqrt"] = self.Sl_decomp_fn(storage_dict["Sl"])
 
         storage_dict["St"] = self.St(hp, x_t, x_t)
-        storage_dict["lam_St"], storage_dict["Q_L_neg_half_St"] = self.St_decomp_fn(storage_dict["St"])
+        storage_dict["lam_St"], storage_dict["St_inv_sqrt"] = self.St_decomp_fn(storage_dict["St"])
 
         storage_dict["Kl"] = self.Kl(hp, x_l, x_l)
-        storage_dict["lam_Kl_tilde"], storage_dict["W_l"] = self.Kl_tilde_decomp_fn(storage_dict["Kl"], storage_dict["Q_L_neg_half_Sl"])
+        storage_dict["lam_Kl_tilde"], storage_dict["W_l"] = self.Kl_tilde_decomp_fn(storage_dict["Kl"], storage_dict["Sl_inv_sqrt"])
         
         storage_dict["Kt"] = self.Kt(hp, x_t, x_t)
-        storage_dict["lam_Kt_tilde"], storage_dict["W_t"] = self.Kt_tilde_decomp_fn(storage_dict["Kt"], storage_dict["Q_L_neg_half_St"])
+        storage_dict["lam_Kt_tilde"], storage_dict["W_t"] = self.Kt_tilde_decomp_fn(storage_dict["Kt"], storage_dict["St_inv_sqrt"])
 
         D = jnp.outer(storage_dict["lam_Kl_tilde"], storage_dict["lam_Kt_tilde"]) + 1.
         storage_dict["D_inv"] = jnp.reciprocal(D)
@@ -165,26 +150,26 @@ class LuasKernel(Kernel):
             Sl_diff = St_diff = Kl_diff = Kt_diff = True
             
             storage_dict["lam_Sl"] = jnp.zeros(N_l)
-            storage_dict["Q_L_neg_half_Sl"] = jnp.zeros((N_l, N_l))
+            storage_dict["Sl_inv_sqrt"] = jnp.zeros((N_l, N_l))
             storage_dict["lam_St"] = jnp.zeros(N_t)
-            storage_dict["Q_L_neg_half_St"] = jnp.zeros((N_t, N_t))
+            storage_dict["St_inv_sqrt"] = jnp.zeros((N_t, N_t))
             storage_dict["lam_Kl_tilde"] = jnp.zeros(N_l)
             storage_dict["W_l"] = jnp.zeros((N_l, N_l))
             storage_dict["lam_Kt_tilde"] = jnp.zeros(N_t)
             storage_dict["W_t"] = jnp.zeros((N_t, N_t))
 
 
-        storage_dict["lam_Sl"], storage_dict["Q_L_neg_half_Sl"] = jax.lax.cond(Sl_diff, self.Sl_decomp_fn, lambda *args: (storage_dict["lam_Sl"], storage_dict["Q_L_neg_half_Sl"]),
-                                                                                Sl)
+        storage_dict["lam_Sl"], storage_dict["Sl_inv_sqrt"] = jax.lax.cond(Sl_diff, self.Sl_decomp_fn,
+                                                                           lambda *args: (storage_dict["lam_Sl"], storage_dict["Sl_inv_sqrt"]), Sl)
         
-        storage_dict["lam_St"], storage_dict["Q_L_neg_half_St"] = jax.lax.cond(St_diff, self.St_decomp_fn, lambda *args: (storage_dict["lam_St"], storage_dict["Q_L_neg_half_St"]),
-                                                                                St)
+        storage_dict["lam_St"], storage_dict["St_inv_sqrt"] = jax.lax.cond(St_diff, self.St_decomp_fn,
+                                                                           lambda *args: (storage_dict["lam_St"], storage_dict["St_inv_sqrt"]), St)
 
-        storage_dict["lam_Kl_tilde"], storage_dict["W_l"] = jax.lax.cond(Kl_diff, self.Kl_tilde_decomp_fn, lambda *args: (storage_dict["lam_Kl_tilde"], storage_dict["W_l"]),
-                                                                         Kl, storage_dict["Q_L_neg_half_Sl"])
+        storage_dict["lam_Kl_tilde"], storage_dict["W_l"] = jax.lax.cond(Kl_diff, self.Kl_tilde_decomp_fn,
+                                                                         lambda *args: (storage_dict["lam_Kl_tilde"], storage_dict["W_l"]), Kl, storage_dict["Sl_inv_sqrt"])
 
-        storage_dict["lam_Kt_tilde"], storage_dict["W_t"] = jax.lax.cond(Kt_diff, self.Kt_tilde_decomp_fn, lambda *args: (storage_dict["lam_Kt_tilde"], storage_dict["W_t"]),
-                                                                        Kt, storage_dict["Q_L_neg_half_St"])
+        storage_dict["lam_Kt_tilde"], storage_dict["W_t"] = jax.lax.cond(Kt_diff, self.Kt_tilde_decomp_fn,
+                                                                         lambda *args: (storage_dict["lam_Kt_tilde"], storage_dict["W_t"]), Kt, storage_dict["St_inv_sqrt"])
 
         D = jnp.outer(storage_dict["lam_Kl_tilde"], storage_dict["lam_Kt_tilde"]) + 1.
         storage_dict["D_inv"] = jnp.reciprocal(D)

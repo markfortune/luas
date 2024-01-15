@@ -3,29 +3,49 @@ import jax
 from jax.flatten_util import ravel_pytree
 from .jax_convenience_fns import order_dict
 import pymc as pm
+from copy import deepcopy
 
 pymc_version = int(pm.__version__[0])
 
 if pymc_version == 4:
     import aesara.tensor as tens
+    from aesara.tensor.var import TensorVariable
     from aesara.graph import Apply, Op
 elif pymc_version == 5:
     import pytensor.tensor as tens
+    from pytensor.tensor.var import TensorVariable
     from pytensor.graph import Apply, Op
 else:
     raise Exception(f"PyMC Version {pymc_version} not currently supported. Supported versions are version 4 and version 5.")
 
 __all__ = [
-    "LuasGP",
+    "LuasPyMC",
 ]
 
-def LuasGP(name, gp = None, var_dict = None, start = None, Y = None, jit = True):
+def LuasPyMC(name, gp = None, var_dict = None, Y = None, jit = True, likelihood_fn = None):
     """PyMC extension which can by used with a luas.GPClass.GP object for log-likelihood calculations.
     
+    Args:
+        name (str): Name of observable storing likelihood values e.g. "log_like".
+        var_dict (PyTree): Dictionary containing parameters being sampled.
+        Y (JAXArray): Data values being fit.
+        logPrior (Callable, optional): Log prior function, by default returns zero.
+            Needs to be in the format logPrior(p) and return a scalar.
+    
     """
+    
+    if likelihood_fn is None:
+        likelihood_fn = gp.logP_stored
 
-    p_arr, make_p = ravel_pytree(start)
-    logP_fn = lambda p_arr, storage_dict: gp.logP_stored(make_p(p_arr), Y, storage_dict)
+    dict_to_build = deepcopy(var_dict)
+    
+    for par in var_dict.keys():
+        if type(var_dict[par]) == TensorVariable:
+            dict_to_build[par] = np.zeros(var_dict[par].shape.eval()[0])
+
+    test_arr, make_p_dict = ravel_pytree(dict_to_build)
+
+    logP_fn = lambda p_arr, storage_dict: likelihood_fn(make_p_dict(p_arr), Y, storage_dict)
 
     if jit:
         value_and_grad_logP_fn = jax.jit(jax.value_and_grad(logP_fn, has_aux = True))
