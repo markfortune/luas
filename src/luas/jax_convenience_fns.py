@@ -27,6 +27,7 @@ def get_corr_mat(cov_mat: JAXArray) -> JAXArray:
         
     Returns:
         JAXArray: The input covariance matrix converted to a correlation matrix.
+        
     """
     
     d = jnp.diag(jnp.sqrt(jnp.reciprocal(jnp.diag(cov_mat))))
@@ -34,16 +35,41 @@ def get_corr_mat(cov_mat: JAXArray) -> JAXArray:
 
 
 def order_list(par_list: list) -> list:
+    """Orders a list in the same way jax.flatten_util.ravel_pytree will order dictionary keys
+    to form an array.
     
+    Args:
+        par_list (list): List to sort
+        
+    Returns:
+        list: The list sorted to match jax.flatten_util.ravel_pytree.
+    """
+    
+    # Create a dictionary with values ordered 0 to len(par_list) - 1
     map_dict = {par:i for (i, par) in enumerate(par_list)}
+    
+    # Run ravel_pytree on this dict to get the order it sorts in
     ind_order, f = ravel_pytree(map_dict)
     
+    # Create a new list which sorts the old list in the way ravel_pytree flattens to arrays.
     par_ordered = [par_list[par_ind] for par_ind in ind_order]
     
     return par_ordered
 
     
 def order_dict(par_dict: dict) -> Tuple[list, list]:
+    """Takes a PyTree/dict and returns two lists ordered to match how jax.flatten_util.ravel_pytree
+    would sort them, one list for the keys in the input dictionary and another list for the values.
+    This function is useful for determining how to sort a dictionary of PyMC tensor variables into an array
+    as ravel_pytree will not work on a PyTree containing PyMC tensor variables.
+    
+    Args:
+        par_dict (PyTree): Dictionary of inputs to have keys and values sorted.
+        
+    Returns:
+        list: List of keys sorted to match jax.flatten_util.ravel_pytree.
+        list: List of values sorted to match jax.flatten_util.ravel_pytree.
+    """
     
     key_list = list(par_dict.keys())
     map_dict = {par:i for (i, par) in enumerate(key_list)}
@@ -56,13 +82,36 @@ def order_dict(par_dict: dict) -> Tuple[list, list]:
 
 
 def array_to_pytree_2D(p: PyTree, arr_2D: JAXArray) -> PyTree:
+    """Takes a 2D array (e.g. a covariance matrix) where the rows and columns are sorted according to jax.flatten_util.ravel_pytree(p)
+    for some input PyTree of parameters p and returns a nested PyTree of the array sorted into the parameter values.
+    
+    Args:
+        p (PyTree): Parameters which describe the order of the array according to how jax.flatten_util.ravel_pytree
+            will flatten into an array.
+        arr_2D (JAXArray): A 2D array where the rows and columns are both sorted in the order in which jax.flatten_util.ravel_pytree
+            flattens the parameter PyTree p.
+        
+    Returns:
+        PyTree: A nested PyTree where the input 2D array has been rearranged to its corresponding parameters.
+    """
+    
+    # First get the function which can convert an array into a PyTree like p in the right order
     p_arr, make_p_dict = ravel_pytree(p)
+    
+    # Use this function to sort the numbers from 0 to N for N parameters
+    # This will be used to sort the array into a nested PyTree in the right order
     coord_dict = make_p_dict(jnp.arange(p_arr.size))
     
+     
     pytree_2D = {}
+    # Loop through the parameters lying along each row
     for k1 in p.keys():
         pytree_2D[k1] = {}
+        
+        # Loop through the parameters lying along each column
         for k2 in p.keys():
+            
+            # Select the array elements corresponding to the row and column parameters
             pytree_2D[k1][k2] = arr_2D[jnp.ix_(coord_dict[k1], coord_dict[k2])]
     
     return pytree_2D
@@ -73,6 +122,20 @@ def pytree_to_array_2D(
     pytree_2D: JAXArray,
     param_order: Optional[list] = None,
 )-> PyTree:
+    """Inverse of array_to_pytree_2D, takes a nested PyTree (e.g. describing a covariance matrix) where the keys
+    correspond to the row and column of a 2D array with a value defined for each parameter with every other parameter.
+    Sorts the nested PyTree into this 2D array sorted according to param_order, defaults to the order
+    jax.flatten_util.ravel_pytree will sort dictionary keys into when forming an array.
+    
+    Args:
+        p (PyTree): Parameters which describe the order of the array according to how jax.flatten_util.ravel_pytree
+            will flatten into an array.
+        pytree_2D (PyTree): A nested PyTree describing a 2D array keyed by the pair of parameters along each row and column.
+        
+    Returns:
+        JAXArray: A 2D array which the nested PyTree has been sorted into.
+            
+    """
     
     if param_order is None:
         param_order = order_list(list(p.keys()))
@@ -120,6 +183,21 @@ def large_hessian_calc(
 
 
 def sigmoid(x):
+    """A sigmoid function. When dealing with parameters bounded between limits [a, b], PyMC and NumPyro
+    vary a parameter between (-jnp.inf, jnp.inf) and use a sigmoid transform followed by an affine transform to
+    map this interval to the interval (a, b).
+    
+    Needed by GP.laplace_approx_with_bounds to correctly calculate the Laplace approximation with respect to
+    the transformed parameters being varied by PyMC and NumPyro.
+    
+    Args:
+        x (JAXArray): A variable in the unbounded transformed space used by PyMC and NumPyro
+        
+    Returns:
+        JAXArray: The sigmoid function applied to x, constraining it to the interval (0, 1)
+    
+    """
+    
     return 1 / (1 + jnp.exp(-x))
 
 def transf_to_unbounded(p, bounds):

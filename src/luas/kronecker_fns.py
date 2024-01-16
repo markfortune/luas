@@ -73,12 +73,20 @@ def kron_prod(A: JAXArray, B: JAXArray, R: JAXArray) -> JAXArray:
 
 @custom_jvp
 def K_inv_vec(R: JAXArray, storage_dict: PyTree) -> JAXArray:
-    """Computes the matrix vector product of the inverse of the covariance matrix K
+    r"""Computes the matrix vector product of the inverse of the covariance matrix K
     times a given input vector R (stored as an N_l x N_t array).
     
     This function will give numerically stable and exact results for first and second derivatives
     evaluated using JAX's grad and hessian functions. Higher order derivatives will not necessarily give
     correct results.
+    
+    Works by computing:
+    .. math::
+
+        K^{-1} \vec{r} = [\mathbf{W}_\lambda \otimes \mathbf{W}_t] D^{-1} [\mathbf{W}_\lambda^T \otimes \mathbf{W}_t^T] \vec{r}
+    
+    Where the definitions of each term can be found in the tutorial "An Introduction into 2D Gaussian Processes" at
+    "https://luas.readthedocs.io/en/latest/tutorials/2D_GP_intro.html".
     
     Args:
         R (JAXArray): Array of shape (N_l, N_t)
@@ -191,6 +199,7 @@ def logdetK_derivative(primals: Tuple[JAXArray, JAXArray], tangents: Tuple[JAXAr
     W_t = storage_dict["W_t"]
     D_inv = storage_dict["D_inv"]
     
+    # Efficiently compute just the required diagonal elements of W.T @ K @ W for each matrix
     W_Kl_W_diag = jnp.multiply(W_l.T, (storage_dict["Kl"] @ W_l).T).sum(1)
     W_Kl_W_diag_dot = jnp.multiply(W_l.T, (storage_dict_dot["Kl"] @ W_l).T).sum(1)
     
@@ -203,11 +212,13 @@ def logdetK_derivative(primals: Tuple[JAXArray, JAXArray], tangents: Tuple[JAXAr
     W_St_W_diag = jnp.multiply(W_t.T, (storage_dict["St"] @ W_t).T).sum(1)
     W_St_W_diag_dot = jnp.multiply(W_t.T, (storage_dict_dot["St"] @ W_t).T).sum(1)
 
+    # Implements the product rule to define the derivative of the log determinant
     K_deriv = jnp.outer(W_Kl_W_diag_dot, W_Kt_W_diag)
     K_deriv += jnp.outer(W_Kl_W_diag, W_Kt_W_diag_dot)
     K_deriv += jnp.outer(W_Sl_W_diag_dot, W_St_W_diag)
     K_deriv += jnp.outer(W_Sl_W_diag, W_St_W_diag_dot)
 
+    # Return the log determinant as well as the custom derivative of the log determinant
     return storage_dict["logdetK"], jnp.multiply(D_inv, K_deriv).sum()
 
 
@@ -246,6 +257,7 @@ def logdetK_calc_hessianable_derivative(primals: Tuple[JAXArray, JAXArray], tang
     W_t = no_deriv(storage_dict["W_t"])
     D_inv = no_deriv(storage_dict["D_inv"])
 
+    # Will require all elements of W.T @ K @ W to be calculated so cannot just calculate diagonal entries
     W_Kl_W = W_l.T @ storage_dict["Kl"] @ W_l
     W_Kl_W_dot = W_l.T @ storage_dict_dot["Kl"] @ W_l
 
@@ -258,12 +270,17 @@ def logdetK_calc_hessianable_derivative(primals: Tuple[JAXArray, JAXArray], tang
     W_St_W = W_t.T @ storage_dict["St"] @ W_t
     W_St_W_dot = W_t.T @ storage_dict_dot["St"] @ W_t
     
+    # This term is calculated same as before
     K_deriv = jnp.outer(jnp.diag(W_Kl_W_dot), jnp.diag(W_Kt_W))
     K_deriv += jnp.outer(jnp.diag(W_Kl_W), jnp.diag(W_Kt_W_dot))
     K_deriv += jnp.outer(jnp.diag(W_Sl_W_dot), jnp.diag(W_St_W))
     K_deriv += jnp.outer(jnp.diag(W_Sl_W), jnp.diag(W_St_W_dot))
 
-    
+    # For the hessian calculation this extra calculation is needed as an extra term appears in the second derivative
+    # due to the product rule.
+    # However, in order to avoid the first derivative being incorrectly calculated we specify which terms need to
+    # have the derivative taken and which terms must not be differentiated.
+    # We use the convenience functions no_deriv and must_deriv to specify which terms must not be and must be differentiated.
     K_deriv -= kron_prod(must_deriv(W_Kl_W)*no_deriv(W_Kl_W.T), no_deriv(W_Kt_W)*no_deriv(W_Kt_W_dot.T), D_inv)
     K_deriv -= kron_prod(no_deriv(W_Kl_W)*no_deriv(W_Kl_W.T), must_deriv(W_Kt_W)*no_deriv(W_Kt_W_dot.T), D_inv)
     
@@ -288,6 +305,7 @@ def logdetK_calc_hessianable_derivative(primals: Tuple[JAXArray, JAXArray], tang
     K_deriv -= kron_prod(must_deriv(W_Sl_W)*no_deriv(W_Kl_W_dot.T), no_deriv(W_St_W)*no_deriv(W_Kt_W.T), D_inv)
     K_deriv -= kron_prod(no_deriv(W_Sl_W)*no_deriv(W_Kl_W_dot.T), must_deriv(W_St_W)*no_deriv(W_Kt_W.T), D_inv)
 
+    # Return the log determinant as well as the custom derivative of the log determinant
     return storage_dict["logdetK"], jnp.multiply(D_inv, K_deriv).sum()
 
 

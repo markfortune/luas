@@ -12,10 +12,10 @@ class LuasNumPyro(dist.Distribution):
     
     Args:
         gp (object): The luas.GPClass.GP object used for log likelihood calculations.
-        p (PyTree): A dictionary of parameter values for calculating the log likelihood
-        hessian (bool, optional): Whether to use a slower log likelihood function which is more
+        var_dict (PyTree): A dictionary of parameter values for calculating the log likelihood
+        likelihood_fn (Callable, optional): Can specify a different log likelihood function than the default of
+            gp.logP i.e. gp.logP_hessianable may be used which is more
             numerically stable if performing hessian/second order derivative calculations.
-            Defaults to False.
         
     """
 
@@ -31,7 +31,7 @@ class LuasNumPyro(dist.Distribution):
         self.p = var_dict
         
         # If using NumPyro functionality which makes use of the hessian of the log likelihood
-        # (i.e. numpyro.infer.autoguide.AutoLaplaceApproximation) then hessian might need to be set to true
+        # (i.e. numpyro.infer.autoguide.AutoLaplaceApproximation) then might be useful to set likelihood_fn = gp.logP_hessianable 
         # as the default log likelihood is faster but not as numerically stable for second order derivatives.
         if likelihood_fn is None:
             self.logP_fn = self.gp.logP

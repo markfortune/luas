@@ -9,7 +9,7 @@ Included below are tutorials introducing Gaussian processes and their extension 
 ```{toctree}
 :maxdepth: 1
 
-tutorials/numpy tutorial
+tutorials/2D_GP_intro
 tutorials/Numpyro Example
 tutorials/PyMC Example
 ```

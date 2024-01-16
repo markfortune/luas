@@ -195,29 +195,37 @@ class GP(object):
 
         return Y_clean
     
-    def plot(self, p: PyTree, Y, fig: Optional[plt.Figure] = None):
+    
+    def plot(self, p: PyTree, Y, fig: Optional[plt.Figure] = None, x_l_plot = None, x_t_plot = None, **kwargs):
+        # Plotting function, only supports GP regression at locations of input data
+        
+        if x_l_plot is None:
+            x_l_plot = self.x_l
+        if x_t_plot is None:
+            x_t_plot = self.x_t
     
         #run prediction
-        gp_mean, gp_cov, M = self.predict(p, Y)
+        gp_mean, gp_cov, M = self.predict(p, Y, **kwargs)
         
         if fig is None: fig = plt.figure(figsize = (20, 5))
         ax = fig.subplots(1, 4, sharey = True)
         
         ax[0].set_title("Data")
-        ax[0].pcolormesh(self.x_t, self.x_l, Y, shading = "nearest")
+        ax[0].pcolormesh(x_t_plot, x_l_plot, Y, shading = "nearest")
         ax[1].set_title("Mean function")
-        ax[1].pcolormesh(self.x_t, self.x_l, M, shading = "nearest")
+        ax[1].pcolormesh(x_t_plot, x_l_plot, M, shading = "nearest")
         ax[2].set_title("GP mean (excl. mean function)")
-        ax[2].pcolormesh(self.x_t, self.x_l, gp_mean - M, shading = "nearest")
+        ax[2].pcolormesh(x_t_plot, x_l_plot, gp_mean - M, shading = "nearest")
         ax[3].set_title("Residual noise")
-        ax[3].pcolormesh(self.x_t, self.x_l, Y - gp_mean, shading = "nearest")
+        ax[3].pcolormesh(x_t_plot, x_l_plot, Y - gp_mean, shading = "nearest")
 
         ax[0].set_ylabel('x_l')
         for i in range(4):
             ax[i].set_xlabel('x_t')
 
         plt.gca().invert_yaxis()
-        plt.show()
+        
+        return fig
     
 
     def plot_K(self, p, x_l_pred = None, x_t_pred = None, plot = True, **kwargs):
@@ -401,7 +409,7 @@ class GP(object):
         if return_array:
             return cov_mat, ordered_param_list
         else:
-            return array_to_pytree_2D(p, cov_mat)
+            return array_to_pytree_2D(p, cov_mat), ordered_param_list
     
     
     def varying_params_wrapper(self, p, vars = None, fixed_vars = None):
@@ -450,6 +458,6 @@ class GP(object):
 
         hessian_array = pytree_to_array_2D(p_transf, hessian_dict)
         
-        cov_mat = self.laplace_approx(p_transf, Y, hessian_array = hessian_array, **kwargs)
+        cov_mat, ordered_param_list = self.laplace_approx(p_transf, Y, hessian_array = hessian_array, **kwargs)
             
-        return cov_mat
+        return cov_mat, ordered_param_list
