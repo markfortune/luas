@@ -7,8 +7,8 @@ __all__ = [
     "evaluate_kernel",
     "distanceL1",
     "distanceL2Sq",
+    "exp",
     "squared_exp",
-    "matern12",
     "matern32",
     "matern52",
     "rational_quadratic",
@@ -17,8 +17,8 @@ __all__ = [
 ]
 
 def evaluate_kernel(kernel_fn: Callable, x: JAXArray, y: JAXArray, *args) -> JAXArray:
-    """Uses JAX's vmap function to efficiently build the covariance matrix from
-    a given kernel function
+    """Uses the ``jax.vmap`` function to efficiently build the covariance matrix from
+    a given kernel function.
     
     Args:
         kernel_fn (Callable): The desired kernel function to use
@@ -54,7 +54,7 @@ def distanceL1(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 
 def distanceL2Sq(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    r"""Evaluates the Squared L2 norm of two input vectors divided by a length scale.
+    r"""Evaluates the Squared L2 norm of two input vectors divided by the length scale ``L``.
     
     .. math::
 
@@ -71,10 +71,10 @@ def distanceL2Sq(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     
     return jnp.sum(jnp.square(x - y)/L**2)
     
-
+    
 def squared_exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     r"""Squared exponential kernel function, also known as the radial basis function,
-    used with evaluate_kernel to build a covariance matrix.
+    used with ``luas.kernels.evaluate_kernel`` to build a covariance matrix.
     
     .. math::
 
@@ -93,7 +93,7 @@ def squared_exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     
     
 def squared_exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    """Function used by squared_exp to evaluate the squared exponential kernel function. 
+    """Function used by ``luas.kernels.squared_exp`` to evaluate the squared exponential kernel function. 
     """
 
     tau_sq = distanceL2Sq(x, y, L)
@@ -101,7 +101,7 @@ def squared_exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 
 def exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    r"""Exponential kernel function, used with evaluate_kernel
+    r"""Exponential kernel function, used with ``luas.kernels.evaluate_kernel``
     to build covariance matrices.
     
     .. math::
@@ -121,7 +121,7 @@ def exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 
 def exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    """Function used by exp to evaluate the Exponential kernel function. 
+    """Function used by ``luas.kernels.exp`` to evaluate the Exponential kernel function. 
     """
 
     delta_t = distanceL1(x, y, L).sum()
@@ -129,7 +129,7 @@ def exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
    
 
 def matern32(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    r"""Matern 3/2 kernel function, used with evaluate_kernel
+    r"""Matern 3/2 kernel function, used with ``luas.kernels.evaluate_kernel``
     to build covariance matrices.
     
     .. math::
@@ -157,7 +157,7 @@ def matern32_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     
 
 def matern52(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    r"""Matern 5/2 kernel function, used with evaluate_kernel
+    r"""Matern 5/2 kernel function, used with ``luas.kernels.evaluate_kernel``
     to build covariance matrices.
     
     .. math::
@@ -185,7 +185,7 @@ def matern52_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 
 def rational_quadratic(x: JAXArray, y: JAXArray, L: Scalar, alpha: Scalar) -> JAXArray:
-    r"""Rational quadratic kernel function, used with evaluate_kernel
+    r"""Rational quadratic kernel function, used with ``luas.kernels.evaluate_kernel``
     to build covariance matrices.
     
     .. math::
@@ -242,7 +242,7 @@ def exp_sine_squared_calc(x: JAXArray, y: JAXArray, L: Scalar, P: Scalar) -> JAX
     
 
 def cosine(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    """Cosine kernel, used with evaluate_kernel
+    """Cosine kernel, used with ``luas.kernels.evaluate_kernel``
     to build covariance matrices which have periodic covariance.
     
     Args:
@@ -263,3 +263,4 @@ def cosine_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     delta_t = distanceL1(x, y, L).sum()
     return jnp.cos(2*jnp.pi*delta_t)
+

@@ -1,7 +1,8 @@
 import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
-from typing import Optional, Callable, Tuple, Any
+from typing import Optional, Callable, Tuple, Any, Union
+
 import jax
 from jax import grad, value_and_grad, hessian, vmap
 import jax.numpy as jnp
@@ -12,65 +13,115 @@ from .luas_types import Kernel, PyTree, JAXArray, Scalar
 from .kronecker_fns import make_vec, make_mat
 from .jax_convenience_fns import array_to_pytree_2D
 
-__all__ = ["GeneralKernel"]
+__all__ = ["GeneralKernel", "general_cholesky"]
 
 # Ensure we are using double precision floats as JAX uses single precision by default
 jax.config.update("jax_enable_x64", True)
 
+    
+def general_cholesky(K: JAXArray) -> Tuple[JAXArray, JAXArray]:
+    r"""Takes an arbitrary covariance matrix ``K`` and returns the Cholesky decomposition
+    as a lower triangular matrix L as well as computing the log determinant of the covariance
+    matrix.
+    
+    The Cholesky factor is related to the original matrix by:
+    
+    .. math::
+    
+        K = L L^T
+    
+    Args:
+        K (JAXArray): Covariance matrix to decompose.
+        
+    Returns:
+        (JAXArray, Scalar): The tuple where the first element is the Cholesky factor L of ``K``
+        and the second element is the log determinant of ``K``.
+            
+    """
+
+    L_cho = JLA.cholesky(K)
+    logdetK = 2*jnp.log(jnp.diag(L_cho)).sum()
+
+    return L_cho, logdetK
+
 
 class GeneralKernel(Kernel):
+    """Kernel object which solves for the log likelihood for any general kernel function ``K``.
+    Can also generate noise from ``K`` and can be used to compute the GP predictive mean and 
+    predictive covariance matrix conditioned on observed data.
+    
+    Note:
+        This method scales poorly in runtime and memory and is likely only appropriate for 
+        small data sets. If the covariance matrix ``K`` possesses structure which can be exploited
+        for matrix decomposition then specifying a ``decomp_fn`` which can more efficiently return
+        a Cholesky factor and log determinant of ``K`` could lead to significant runtime savings.
+        The :class:`LuasKernel` class should provide significant runtime savings if the covariance matrix
+        has kronecker product structure in each dimension except in cases where one of the dimensions
+        is very small or a sum of more than two kronecker products is needed.
+    
+    Args:
+        K (Callable, optional): Function which returns the covariance matrix ``K``.
+        decomp_fn (Callable, optional): Function which given the covariance matrix ``K``
+            computes the Cholesky decomposition and log determinant of ``K``.
+            Defaults to ``luas.GeneralKernel.general_cholesky`` which performs Cholesky decomposition for
+            any general covariance matrix.
+            
+    """
+    
     def __init__(
         self,
         K: Optional[Callable] = None,
-        Kl_fns: Optional[list[Callable]] = None,
-        Kt_fns: Optional[list[Callable]] = None
+        decomp_fn = None,
     ):
+        # Function used to build the covariance matrix K
+        self.K = K
         
-        if K is None:
-            self.K = self.build_kronecker_K(Kl_fns, Kt_fns)
+        if decomp_fn is None:
+            # Defaults to general Cholesky factorisation for finding the Cholesky factor
+            # and the log determinant of K
+            self.K_decomp_fn = general_cholesky
         else:
-            self.K = K
-        self.decomp_fn = self.cholesky_decomp_no_stored_results
-        
-    
-    def build_kronecker_K(
-        self,
-        Kl_fns: Optional[list[Callable]] = None,
-        Kt_fns: Optional[list[Callable]] = None,
-    ) -> Callable:
-    
-        def K_kron(
-            hp: PyTree,
-            x_l1: JAXArray,
-            x_l2: JAXArray,
-            x_t1: JAXArray,
-            x_t2: JAXArray, 
-            **kwargs,
-        ) -> JAXArray:
-        
-            K = jnp.zeros((x_l1.shape[-1]*x_t1.shape[-1], x_l2.shape[-1]*x_t2.shape[-1]))
-            for i in range(len(Kl_fns)):
-                Kl = Kl_fns[i](hp, x_l1, x_l2, **kwargs)
-                Kt = Kt_fns[i](hp, x_t1, x_t2, **kwargs)
-                K += jnp.kron(Kl, Kt)
-
-            return K
-        
-        return K_kron
+            # Alternatively may specify a function which given the constructed covariance matrix K
+            # will return the Cholesky factor and log determinant of K (see general_cholesky for an example)
+            self.K_decomp_fn = decomp_fn
             
+        # alias to maintain consistency with LuasKernel which has a separate fn for calculating the hessian
+        self.logL_hessianable = self.logL
+
+    
         
-    def cholesky_decomp_no_stored_results(
+    def decomp_fn(
         self,
         hp: PyTree,
         x_l: JAXArray,
         x_t: JAXArray, 
         storage_dict: Optional[PyTree] = {},
     ) -> PyTree:
-    
-        K = self.K(hp, x_l, x_l, x_t, x_t)
+        """Builds the full covariance matrix K and uses the decomposition function specified at
+        initialisation to return the Cholesky factor and the log determinant of K.
         
-        storage_dict["L_cho"] = JLA.cholesky(K)
-        storage_dict["logdetK"] = 2*jnp.log(jnp.diag(storage_dict["L_cho"])).sum()
+        Args:
+            hp (Pytree): Hyperparameters needed to build the covariance matrix ``K``. Will be
+                unaffected if additional mean function parameters are also included.
+            x_l (JAXArray): Array containing wavelength/vertical dimension regression variable(s).
+                May be of shape ``(N_l,)`` or ``(d_l,N_l)`` for ``d_l`` different wavelength/vertical
+                regression variables.
+            x_t (JAXArray): Array containing time/horizontal dimension regression variable(s).
+                May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different time/horizontal
+                regression variables.
+            storage_dict (PyTree): Stored values from the decomposition of the covariance matrix. For
+                :class:`GeneralKernel` this consists of the Cholesky factor and the log determinant
+                of ``K``.
+                
+        Returns:
+            PyTree: Stored values from the decomposition of the covariance matrix consisting of the
+                Cholesky factor and the log determinant of ``K``.
+        
+        """
+        # Simply builds the covariance matrix and decomposes it into a Cholesky factor L
+        # and precomputes the log determinant of K for log likelihood calculations
+        K = self.K(hp, x_l, x_l, x_t, x_t)
+        storage_dict["L_cho"], storage_dict["logdetK"] = self.K_decomp_fn(K)
         
         return storage_dict
 
@@ -83,51 +134,90 @@ class GeneralKernel(Kernel):
         R: JAXArray,
         storage_dict: PyTree,
     ) -> Tuple[Scalar, PyTree]:
+        """Computes the log likelihood using Cholesky factorisation and also returns stored values
+        from the matrix decomposition.
         
+        Args:
+            hp (Pytree): Hyperparameters needed to build the covariance matrix ``K``. Will be
+                unaffected if additional mean function parameters are also included.
+            x_l (JAXArray): Array containing wavelength/vertical dimension regression variable(s).
+                May be of shape ``(N_l,)`` or ``(d_l,N_l)`` for ``d_l`` different wavelength/vertical
+                regression variables.
+            x_t (JAXArray): Array containing time/horizontal dimension regression variable(s).
+                May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different time/horizontal
+                regression variables.
+            R (JAXArray): Residuals to be fit calculated from the observed data by subtracting the deterministic
+                mean function. Must have the same shape as the observed data (N_l, N_t).
+            storage_dict (PyTree): Stored values from the decomposition of the covariance matrix. For
+                :class:`GeneralKernel` this consists of the Cholesky factor and the log determinant
+                of ``K``.
+                
+        Returns:
+            (Scalar, PyTree): A tuple where the first element is the value of the log likelihood.
+            The second element is a PyTree which contains stored values from the decomposition of the
+            covariance matrix.
+        """
+        
+        # Calculate the Cholesky factor and log determinant of K, stored in storage_dict
         storage_dict = self.decomp_fn(hp, x_l, x_t, storage_dict = storage_dict)
             
-        r = make_vec(R)
+        # Calculation requires r to be a vector of shape (N_l*N_t,)
+        # As opposed to (N_l, N_t) which is used for LuasKernel calculations
+        r = R.ravel("C")
+        
+        # Solves for L^-1 r
         alpha = JLA.solve_triangular(storage_dict["L_cho"], r, trans = 1)
 
+        # Calculates the log likelihood
         logL = - 0.5 *  jnp.sum(jnp.square(alpha)) - 0.5 * storage_dict["logdetK"] - (r.size/2.) * jnp.log(2*jnp.pi)
 
         return logL, storage_dict
-
-
-    def logL_hessianable(
-        self,
-        hp: PyTree,
-        x_l: JAXArray,
-        x_t: JAXArray,
-        R: JAXArray,
-        storage_dict: PyTree,
-    ) -> Tuple[Scalar, PyTree]:
-        
-        storage_dict = self.decomp_fn(hp, x_l, x_t, storage_dict = storage_dict)
-            
-        r = make_vec(R)
-        alpha = JLA.solve_triangular(storage_dict["L_cho"], r, trans = 1)
-
-        logL = - 0.5 *  jnp.sum(jnp.square(alpha)) - 0.5 * storage_dict["logdetK"] - (r.size/2.) * jnp.log(2*jnp.pi)
-
-        return logL, storage_dict
-
+    
 
     def generate_noise(
         self,
         hp: PyTree,
         x_l: JAXArray,
         x_t: JAXArray,
+        size: Optional[int] = 1,
         storage_dict: Optional[PyTree] = {},
-        size: Optional[int] = 1
     ) -> JAXArray:
+        """Generate noise with the covariance matrix returned by this kernel using the input
+        hyperparameters ``hp``.
+        
+        Args:
+            hp (Pytree): Hyperparameters needed to build the covariance matrix ``K``. Will be
+                unaffected if additional mean function parameters are also included.
+            x_l (JAXArray): Array containing wavelength/vertical dimension regression variable(s).
+                May be of shape ``(N_l,)`` or ``(d_l,N_l)`` for ``d_l`` different wavelength/vertical
+                regression variables.
+            x_t (JAXArray): Array containing time/horizontal dimension regression variable(s).
+                May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different time/horizontal
+                regression variables.
+            size (int, optional): The number of different draws of noise to generate. Defaults to 1.
+            storage_dict (PyTree): Stored values from the decomposition of the covariance matrix. For
+                :class:`GeneralKernel` this consists of the Cholesky factor and the log determinant
+                of ``K``.
+                
+        Returns:
+            JAXArray: Generate noise of shape ``(N_l, N_t)`` if ``size = 1`` or ``(N_l, N_t, size)``
+                if size > 1.
+        
+        """
         
         storage_dict = self.decomp_fn(hp, x_l, x_t, storage_dict = {})
         
-        z = np.random.normal(size = (storage_dict["L_cho"].shape[0], size))
+        N_l = x_l.shape[-1]
+        N_t = x_t.shape[-1]
+
+        z = np.random.normal(size = (N_l*N_t, size))
         r = jnp.einsum("ij,j...->i...", storage_dict["L_cho"], z)
-        R = make_mat(r, x_l.shape[-1], x_t.shape[-1])
-                     
+
+        if size == 1:
+            R = r.reshape((N_l, N_t))
+        else:
+            R = r.reshape((N_l, N_t, size))
+        
         return R
     
     
@@ -135,33 +225,107 @@ class GeneralKernel(Kernel):
         self,
         hp: PyTree,
         x_l: JAXArray,
-        x_l_s: JAXArray,
+        x_l_pred: JAXArray,
         x_t: JAXArray,
-        x_t_s: JAXArray,
+        x_t_pred: JAXArray,
         R: JAXArray,
         M_s: JAXArray,
         storage_dict: Optional[PyTree] = {},
-        wn = True,
+        wn: Optional[bool] = True,
+        return_std_dev: Optional[bool] = True,
     ) -> Tuple[JAXArray, JAXArray, JAXArray]:
+        r"""Performs GP regression and computes the GP predictive mean and the GP predictive
+        uncertainty as the standard devation at each location or else can return the full
+        covariance matrix. Requires the input kernel function ``K`` to have a ``wn`` keyword
+        argument that defines the kernel when white noise is included (``wn = True``) and
+        when white noise isn't included (``wn = False``).
+        
+        Currently assumes the same input hyperparameters for both the observed and predicted
+        locations. The predicted locations ``x_l_pred`` and ``x_t_pred`` may deviate from
+        the observed locations ``x_l`` and ``x_t`` however.
+        
+        The GP predictive mean is defined as:
+        
+        .. math::
+
+            \mathbb{E}[\vec{y}_*] = \vec{\mu}_* + \mathbf{K}_*^T \mathbf{K}^{-1} \vec{r}
+            
+        And the GP predictive covariance is given by:
+        
+        .. math::
+            
+            Var[\vec{y}_*] = \mathbf{K}_{**} - \mathbf{K}_*^T \mathbf{K}^{-1} \mathbf{K}_*
+        
+        Args:
+            hp (Pytree): Hyperparameters needed to build the covariance matrix ``K``. Will be
+                unaffected if additional mean function parameters are also included.
+            x_l (JAXArray): Array containing wavelength/vertical dimension regression variable(s)
+                for the observed locations. May be of shape ``(N_l,)`` or ``(d_l,N_l)`` for ``d_l``
+                different wavelength/vertical regression variables.
+            x_l_pred (JAXArray): Array containing wavelength/vertical dimension regression variable(s)
+                for the prediction locations (which may be the same as the observed locations).
+                May be of shape ``(N_l_pred,)`` or ``(d_l,N_l_pred)`` for ``d_l`` different
+                wavelength/vertical regression variables.
+            x_t (JAXArray): Array containing time/horizontal dimension regression variable(s) for the
+                observed locations. May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different
+                time/horizontal regression variables.
+            x_t_pred (JAXArray): Array containing time/horizontal dimension regression variable(s) for
+                the prediction locations (which may be the same as the observed locations). May be of
+                shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different time/horizontal regression variables.
+            R (JAXArray): Residuals to be fit, equal to the observed data minus the deterministic
+                mean function. Must have the same shape as the observed data ``(N_l, N_t)``.
+            M_s (JAXArray): Mean function evaluated at the locations of the predictions ``x_l_pred``, ``x_t_pred``.
+                Must have shape ``(N_l_pred, N_t_pred)`` where ``N_l_pred`` is the number of wavelength/vertical
+                dimension predictions and ``N_t_pred`` the number of time/horizontal dimension predictions.
+            storage_dict (PyTree, optional): Stored values from the decomposition of the covariance matrix. For the
+                GeneralKernel object this consists of the Cholesky factor and the log determinant of K.
+            wn (bool, optional): Whether to include white noise in the uncertainty at the predicted locations.
+                Defaults to True.
+            return_std_dev (bool, optional): If ``True`` will return the standard deviation of uncertainty at the predicted
+                locations. Otherwise will return the full predictive covariance matrix. Defaults to True.
+        
+        Returns:
+            JAXArray: The GP predictive mean at the prediction locations.
+            JAXArray: The GP predictive uncertainty in standard deviations of shape ``(N_l_pred, N_t_pred)``
+            if ``return_std_dev = True``, otherwise the full GP predictive covariance matrix of shape
+            ``(N_l_pred*N_t_pred, N_l_pred*N_t_pred)``.
+        
+        """
+        
+        N_l_pred = x_l_pred.shape[-1]
+        N_t_pred = x_t_pred.shape[-1]
         
         storage_dict = self.decomp_fn(hp, x_l, x_t, storage_dict = storage_dict)
             
-        K_s = self.K(hp, x_l, x_l_s, x_t, x_t_s, wn = False)
-        K_ss = self.K(hp, x_l_s, x_l_s, x_t_s, x_t_s, wn = wn)
+        K_s = self.K(hp, x_l, x_l_pred, x_t, x_t_pred, wn = False)
+        K_ss = self.K(hp, x_l_pred, x_l_pred, x_t_pred, x_t_pred, wn = wn)
 
         # Generate mean function and compute residuals
-        r = make_vec(R)
+        r = R.ravel("C")
         alpha = JLA.solve_triangular(storage_dict["L_cho"], r, trans = 1)
         K_inv_R = JLA.solve_triangular(storage_dict["L_cho"], alpha, trans = 0)
         K_s_K_inv_R = K_s @ K_inv_R
 
-        gp_mean = M_s + make_mat(K_s_K_inv_R, x_l_s.shape[-1], x_t_s.shape[-1])
-
-        sigma_diag = jnp.diag(K_ss)
+        gp_mean = M_s + K_s_K_inv_R.reshape(N_l_pred, N_t_pred)
         
-        K_s_alpha = JLA.solve_triangular(storage_dict["L_cho"], K_s, trans = 1)
-        sigma_diag -= jnp.diag(K_s_alpha.T @ K_s_alpha)
-        sigma_diag = make_mat(sigma_diag, x_l_s.shape[-1], x_t_s.shape[-1])
+        L_inv_K_s = JLA.solve_triangular(storage_dict["L_cho"], K_s, trans = 1)
         
-        return gp_mean, sigma_diag
+        if return_std_dev:
+            # Get diagonal of covariance of predicted locations with other predicted locations
+            pred_err = jnp.diag(K_ss)
+            
+            # Subtract off term related to covariance between predicted and observed locations
+            # This method efficiently calculates only the diagonal of the term
+            pred_err -= (L_inv_K_s**2).sum(0)
+            
+            # Convert shape to (N_l_pred, N_t_pred) to match observed data but at predicted locations
+            pred_err = pred_err.reshape(N_l_pred, N_t_pred)
+            
+            # Convert from variance to std dev
+            pred_err = jnp.sqrt(pred_err)
+        else:
+            # Directly compute the predictive covariance matrix
+            pred_err = K_ss - L_inv_K_s.T @ L_inv_K_s
+        
+        return gp_mean, pred_err
     

@@ -11,7 +11,7 @@ from .kernels import (
 )
 from .GeneralKernel import GeneralKernel
 from .LuasKernel import LuasKernel
-from .GPClass import GP
+from .GP import GP
 
 @pytest.fixture
 def rtol():

@@ -162,7 +162,7 @@ def r_K_inv_r_derivative(primals: Tuple[JAXArray, JAXArray], tangents: Tuple[JAX
     KKIV =  kron_prod(storage_dict_dot["Kl"], storage_dict["Kt"], KIV) + kron_prod(storage_dict["Kl"], storage_dict_dot["Kt"], KIV)
     KKIV += kron_prod(storage_dict_dot["Sl"], storage_dict["St"], KIV) + kron_prod(storage_dict["Sl"], storage_dict_dot["St"], KIV)
 
-    return jnp.multiply(R, KIV).sum(), jnp.multiply(2*R_dot - KKIV, KIV).sum()
+    return jnp.multiply(R, KIV).sum(), - jnp.multiply(KKIV, KIV).sum() + 2*jnp.multiply(R_dot, KIV).sum() 
 
     
 @custom_jvp

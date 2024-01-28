@@ -1,10 +1,10 @@
 luas package
 ============
 
-luas.GPClass module
+luas.GP module
 -------------------
 
-.. automodule:: luas.GPClass
+.. automodule:: luas.GP
    :members:
    :undoc-members:
    :show-inheritance:
