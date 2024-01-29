@@ -33,11 +33,16 @@ def get_corr_mat(cov_mat: JAXArray, zero_diag: Optional[bool] = False) -> JAXArr
         
     """
     
+    # Get inverse sqrt of diagonal elements
     d = jnp.diag(jnp.sqrt(jnp.reciprocal(jnp.diag(cov_mat))))
+    
+    # Divides each covariance element by the standard deviation of each pair of parameters
     corr_mat = d @ cov_mat @ d
     
+    # Setting the diagonal to zero can be useful for visualising small correlation
     if zero_diag:
         corr_mat = corr_mat*(1 - jnp.eye(corr_mat.shape[0]))
+        
     return corr_mat
 
 
@@ -66,24 +71,27 @@ def order_list(par_list: list) -> list:
 
     
 def order_dict(par_dict: dict) -> Tuple[list, list]:
-    """Takes a PyTree/``dict`` and returns two lists ordered to match how ``jax.flatten_util.ravel_pytree``
-    would sort them, one list for the keys in the input dictionary and another list for the values.
-    This function is useful for determining how to sort a dictionary of PyMC tensor variables into an array
-    as ravel_pytree will not work on a PyTree containing PyMC tensor variables.
+    """Takes a PyTree and returns two lists ordered to match how ``jax.flatten_util.ravel_pytree``
+    would sort the keys, one list for the keys in the input dictionary and another list for the values.
+    This function is useful for determining how to sort a dictionary of ``PyMC`` tensor variables into an array
+    as ``jax.flatten_util.ravel_pytree`` will not work on a PyTree containing ``PyMC`` tensor variables.
     
     Args:
-        par_dict (PyTree): Dictionary of inputs to have keys and values sorted.
+        par_dict (PyTree): PyTree to sort by keys
         
     Returns:
-        :obj:`list` of :obj:`str`: List of keys sorted to match ``jax.flatten_util.ravel_pytree``.
-        :obj:`list` of :obj:`str`: List of values sorted to match ``jax.flatten_util.ravel_pytree``.
+        (:obj:`list` of :obj:`str`, :obj:`list` of :obj:`str`): Returns a tuple of two lists, the first a list of keys
+        sorted to match ``jax.flatten_util.ravel_pytree`` and the second a list of values also sorted to match
+        ``jax.flatten_util.ravel_pytree``.
         
     """
     
+    # Since the values may not be JAX variables, create a similar dict with integer values
     key_list = list(par_dict.keys())
     map_dict = {par:i for (i, par) in enumerate(key_list)}
     ind_order, f = ravel_pytree(map_dict)
 
+    # Use the order the integers are sorted into to order the list of keys and list of values
     par_keys_ordered = [key_list[par_ind] for par_ind in ind_order]
     par_values_ordered = [par_dict[par] for par in par_keys_ordered]
     
@@ -132,14 +140,14 @@ def pytree_to_array_2D(
     pytree_2D: JAXArray,
     param_order: Optional[list] = None,
 )-> PyTree:
-    """Inverse of array_to_pytree_2D, takes a nested PyTree (e.g. describing a covariance matrix) where the keys
+    """Inverse of ``array_to_pytree_2D``, takes a nested PyTree (e.g. describing a covariance matrix) where the keys
     correspond to the row and column of a 2D array with a value defined for each parameter with every other parameter.
     Sorts the nested PyTree into this 2D array sorted according to param_order, defaults to the order
-    jax.flatten_util.ravel_pytree will sort dictionary keys into when forming an array.
+    ``jax.flatten_util.ravel_pytree`` will sort dictionary keys into when forming an array.
     
     Args:
         p (PyTree): Parameters used for log likelihood calculations, used to describe the order of the array
-            according to how jax.flatten_util.ravel_pytree will flatten into an array.
+            according to how ``jax.flatten_util.ravel_pytree`` will flatten into an array.
         pytree_2D (PyTree): A nested PyTree describing a 2D array keyed by the pair of parameters along each row and column.
         
     Returns:
@@ -147,18 +155,25 @@ def pytree_to_array_2D(
             
     """
     
+    # First must solve for the order in the array to place each parameter into
     if param_order is None:
+        # Defaults to sorting how ravel_pytree will sort
         param_order = order_list(list(p.keys()))
         p_arr, make_p_dict = ravel_pytree(p)
         coord_dict = make_p_dict(jnp.arange(p_arr.size))
+        
+        # Get the total number of parameters
         N_par = p_arr.size
     else:
+        # If a specified order has been given must solve for the locations in an array
+        # each parameter should go to
         coord_dict = {}
         N_par = 0
         for par in param_order:
             coord_dict[par] = jnp.arange(N_par, N_par + p[par].size)
             N_par += p[par].size
             
+    # Loop through each element in the nested PyTree and use the array locations already found
     arr_2D = jnp.zeros((N_par, N_par))
     for k1 in param_order:
         for k2 in param_order:
@@ -175,50 +190,60 @@ def varying_params_wrapper(
     to_numpy: Optional[bool] = True
 ) ->  Tuple[PyTree, Callable]:
     """Often useful to take a PyTree of parameters and return a subset of the (key, value)
-    pairs which are to be varied. E.g. PyMC requires start values at initialisation of
+    pairs which are to be varied. E.g. ``PyMC`` requires start values at initialisation of
     optimisation/inference to only include parameters which are to be fit for.
     
     Also returns a function which can take the subset of parameters being varied and
     return the full set of parameters with the fixed parameters added back in.
     
     Note: By default will return parameter values in NumPy arrays as this is required for inference
-    with PyMC. This can be turned off by setting to_numpy to False.
+    with ``PyMC``. This can be turned off by setting ``to_numpy = False``.
 
     Args:
         p (PyTree): The full set of parameters used for likelihood calculations
             potentially including both mean function parameters and hyperparameters.
         vars (:obj:`list` of :obj:`str`, optional): The list of keys names corresponding to
             the parameters being varied which we want to include in the output
-            parameter PyTree. If specified in addition to fixed_vars will raise an Exception.
+            parameter PyTree. If specified in addition to fixed_vars will raise an ``Exception``.
         fixed_vars (:obj:`list` of :obj:`str`, optional): Alternative to vars, may specify instead
             the parameters being kept fixed which will be excluded from the output parameter
             PyTree.  If specified in addition to vars will raise an Exception.
         to_numpy (bool, optional): Converts parameter values from input parameter PyTree to
-            NumPy arrays as this is required for inference with PyMC. Defaults to True.
+            ``NumPy`` arrays as this is required for inference with ``PyMC``. Defaults to ``True``.
     
     Returns:
-        PyTree: The input PyTree ``p`` but containing only the (key, value) pairs of
-            parameters to be varied.
-        Callable: A function which takes the output parameter PyTree containing only the
-            parameters being varied and adds back in the fixed parameters without overwritting
-            the parameters being varied.
+        (PyTree, Callable): Returns a tuple where the first element is the input PyTree ``p``
+        but containing only the ``(key, value)`` pairs of parameters to be varied, the second element
+        is a function which takes the output parameter PyTree containing only the parameters being
+        varied and adds back in the fixed parameters without overwritting the parameters being varied.
     
     """
+    
     if to_numpy:
+        # PyMC cannot deal with values being JAXArrays so must convert to NumPy
         to_array = np.array
     else:
+        # Do nothing to parameter values if to_numpy = False
         to_array = lambda p: p
     
-    # PyMC requires input parameter arrays in NumPy
     if vars is not None and fixed_vars is None:
+        # If just vars specified
         p_vary = {par:to_array(p[par]) for par in vars}
+        
     if vars is None and fixed_vars is not None:
+        # If just fixed_vars specified
         p_vary = {par:to_array(p[par]) for par in p.keys() if par not in fixed_vars}
+        
     elif vars is None and fixed_vars is None:
+        # If neither vars nor fixed_vars specified just keep all parameters
         p_vary = {par:to_array(p[par]) for par in p.keys()}
+        
     elif vars is not None and fixed_vars is not None:
+        # If both vars and fixed vars specified raise an Exception
         raise Exception("Both vars and fixed_vars cannot be defined!")
 
+    # Create a function which takes the subset of parameters in p_vary and
+    # adds back in the fixed parameters
     p_fixed = deepcopy(p)
     def make_p(p_vary):
         p_fixed.update(p_vary)
@@ -233,6 +258,7 @@ def large_hessian_calc(
     *args,
     block_size: Optional[int] = 50,
     return_array: Optional[bool] = True,
+    jit: Optional[bool] = True,
     **kwargs,
 ) -> Union[JAXArray, PyTree]:
     """Breaks up the calculation of the hessian of a large matrix into groups of rows to reduce
@@ -253,32 +279,48 @@ def large_hessian_calc(
             Defaults to 50.
         return_array (bool, optional): Whether to return the hessian as an array of shape ``(N_{par}, N_{par})``
             for ``N_{par}`` total parameters in ``p`` or as a nested PyTree where the hessian values for parameters
-            named par1 and par2 would be given by hessian_pytree[par1][par2] and hessian_pytree[par2][par1].
+            named par1 and par2 would be given by ``hessian_pytree[par1][par2]`` and ``hessian_pytree[par2][par1]``.
             Defaults to True.
+        jit (bool, optional): Whether to JIT compile the hessian function, can speed up the calculation assuming
+            the function can be JIT compiled. Defaults to ``True``.
             
     Returns:
-        JAXArray or PyTree: Depending on whether return_array is set to True or False will either return a JAXArray
-            or PyTree giving the hessian with respect to each parameter in ``p``. If returning a JAXArray then the
-            parameters will be ordered in the same order that ``jax.flatten_util.ravel_pytree`` will order the input
-            PyTree ``p``.
+        JAXArray or PyTree: Depending on whether ``return_array`` is set to ``True`` or ``False`` will either return a JAXArray
+        or PyTree giving the hessian with respect to each parameter in ``p``. If returning a JAXArray then the
+        parameters will be ordered in the same order that ``jax.flatten_util.ravel_pytree`` will order the input
+        PyTree ``p``.
     
     """
     
+    # To break calculation into rows must first write a wrapper function which takes as input an array of parameters
     p_arr, make_p_dict = ravel_pytree(p)
     fn_arr_wrapper = lambda p_arr: fn(make_p_dict(p_arr), *args, **kwargs)
+    
+    # We then create a function which returns the gradient of specific array elements
     grad_wrapper = lambda p_arr, i: jax.grad(fn_arr_wrapper)(p_arr)[i]
-    hessian_wrapper = jax.jit(jax.vmap(jax.grad(grad_wrapper), in_axes = (None, 0)))
+    
+    # Finally we create a function which takes the derivative of a group of first derivatives
+    # vmap allows us to take this gradient wrt an array of gradients as jax.grad only works
+    # on functions which return scalars
+    hessian_wrapper = jax.vmap(jax.grad(grad_wrapper), in_axes = (None, 0))
+    
+    if jit:
+        hessian_wrapper = jax.jit(hessian_wrapper)
     
     N_par = p_arr.size
     hess_arr = jnp.zeros((N_par, N_par))
+    
+    # Iterates through blocks of rows solving second derivatives
     for i in tqdm(range(0, N_par, block_size)):
         rows = jnp.arange(i, i+block_size)
         hess_arr = hess_arr.at[rows, :].set(hessian_wrapper(p_arr, rows))
 
+    # If the size of the array is not an even multiple of block_size will calculate the remaining rows
     if N_par % block_size > 0:
         rows = jnp.arange(i+block_size, N_par)
         hess_arr = hess_arr.at[rows, :].set(hessian_wrapper(p_arr, rows))
-
+    
+    # Defaults to returning a JAXArray of parameters but can return a nested PyTree
     if return_array:
         return hess_arr
     else:
@@ -337,65 +379,71 @@ def transf_from_unbounded(x, bounds):
 
 
 def transf_to_unbounded_params(p, param_bounds):
-    """Replicates the transformation used by PyMC and NumPyro to convert a PyTree of parameters -
-    some or all of which lie within the bounds given by param_bounds - to unbounded parameters
-    using the transformation given in transf_to_unbounded.
+    """Replicates the transformation used by ``PyMC`` and ``NumPyro`` to convert a PyTree of parameters -
+    some or all of which lie within the bounds given by ``param_bounds`` - to unbounded parameters
+    using the transformation given in ``transf_to_unbounded``.
     
     Used for calculating the Laplace approximation of the posterior with respect to the transformed
-    parameters used by PyMC/NumPyro for sampling.
+    parameters used by ``PyMC`` and ``NumPyro`` for sampling.
     
     Examples:
-        For a single parameter p["d"] which lies between bounds (a, b), param_bounds should be
-        of the form: param_bounds = {"d":[a, b]} where a and b have the same shape as p["d"].
+        For a single parameter ``p["d"]`` which lies between bounds ``(a, b)``, ``param_bounds`` should be
+        of the form: ``param_bounds = {"d":[a, b]}`` where ``a`` and ``b`` have the same shape as ``p["d"]``.
     
     Args:
         p (PyTree): All parameters used for log likelihood calculations potentially including
             additional unbounded parameters.
-        param_bounds (PyTree): Contains any bounds for the parameters in p.
+        param_bounds (PyTree): Contains any bounds for the parameters in ``p``.
         
     Returns:
-        JAXArray: All parameters in p with the unbounded transformed values for any parameter in
-            param_bounds. Should match the transformed parameters being sampled by PyMC/NumPyro
+        JAXArray: All parameters in ``p`` with the unbounded transformed values for any parameter in
+        ``param_bounds``. Should match the transformed parameters being sampled by ``PyMC`` and ``NumPyro``.
     
     """
     # Copy any parameters which do not lie within bounds specified in param_bounds
-    p_pymc = deepcopy(p)
+    p_unbounded = deepcopy(p)
 
+    # Loop through each parameter in the bounds
     for par in param_bounds.keys():
-        if par in p_pymc.keys():
-            p_pymc[par] = transf_to_unbounded(p[par], param_bounds[par])
+        # Check if the parameter is actually being varied
+        if par in p_unbounded.keys():
+            # Transforms to unbounded space
+            p_unbounded[par] = transf_to_unbounded(p[par], param_bounds[par])
 
-    return p_pymc
+    return p_unbounded
 
 
-def transf_from_unbounded_params(p_pymc, param_bounds):
+def transf_from_unbounded_params(p_unbounded, param_bounds):
     """Inverse of the transformation in transf_to_unbounded_params. Converts parameters being
-    sampled by PyMC and NumPyro to the parameters which lie between bounds described in param_bounds
-    which are used for log likelihood calculations.
+    sampled by ``PyMC`` and ``NumPyro`` to the parameters which lie between bounds described in
+    ``param_bounds`` which are used for log likelihood calculations.
     
     Used for calculating the Laplace approximation of the posterior with respect to the transformed
-    parameters used by PyMC/NumPyro for sampling.
+    parameters used by ``PyMC`` and ``NumPyro`` for sampling.
     
     Examples:
-        For a single parameter p["d"] which should lie between bounds (a, b), param_bounds should be
-        of the form: param_bounds = {"d":[a, b]} where a and b have the same shape as p["d"].
+        For a single parameter ``p["d"]`` which should lie between bounds ``(a, b)``, ``param_bounds`` should be
+        of the form: ``param_bounds = {"d":[a, b]}`` where ``a`` and ``b`` have the same shape as ``p["d"]``.
     
     Args:
-        p_pymc (PyTree): All parameters used for sampling by PyMC/NumPyro to convert for log likelihood
-            calculations.
-        param_bounds (PyTree): Contains any bounds for the parameters in p.
+        p_unbounded (PyTree): All parameters used for sampling by ``PyMC`` and ``NumPyro`` to convert
+            for log likelihood calculations which lie in an transformed unbounded space.
+        param_bounds (PyTree): Contains any bounds for the parameters in ``p``.
         
     Returns:
         JAXArray: All parameters used for log likelihood calculations potentially including
-            additional unbounded parameters.
+        additional unbounded parameters.
     
     """
     
     # Copy any parameters which do not lie within bounds specified in param_bounds
-    p = deepcopy(p_pymc)
+    p_bounded = deepcopy(p_unbounded)
 
+    # Loop through each parameter in the bounds
     for par in param_bounds.keys():
-        if par in p_pymc.keys():
-            p[par] = transf_from_unbounded(p_pymc[par], param_bounds[par])
+        # Check if the parameter is actually being varied
+        if par in p_bounded.keys():
+            # Transforms back to bounded space
+            p_bounded[par] = transf_from_unbounded(p_unbounded[par], param_bounds[par])
 
-    return p
+    return p_bounded

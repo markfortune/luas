@@ -28,8 +28,8 @@ jax.config.update("jax_enable_x64", True)
 class GP(object):
     """Gaussian process class specialised to make the analysis of 2D data sets simple and efficient.
     Can be used with any :class:`Kernel` such as :class:`LuasKernel` to perform
-    the required log-likelihood calculations in addition to performing GP regression for sigma clipping
-    and visualisation. Support for calculating Laplace approximations of the posterior with respect to
+    the required log-likelihood calculations in addition to performing GP regression.
+    Support for calculating Laplace approximations of the posterior with respect to
     the input parameters is also provided as it can be very useful when sampling large numbers of parameters
     (such as for tuning the MCMC).
     
@@ -37,12 +37,12 @@ class GP(object):
     be used to compute the deterministic mean function. The observed data ``Y`` is assumed to have shape ``(N_l, N_t)``
     and will be a parameter of most methods.
     
-    The first input ``x_l`` is assumed to lie along the rows of the observed data used for log-likelihood calculations
-    and is expected to have shape ``(N_l,)`` or ``(d_l, N_l)`` where ``d_l`` is the number of regression variables along the
-    wavelength/vertical dimension used as kernel inputs and/or mean function inputs.
+    The first input ``x_l`` is the wavelength/vertical dimension of the observed data ``Y`` and is expected to
+    have shape ``(N_l,)`` or ``(d_l, N_l)`` where N_l is the number of rows of ``Y`` and ``d_l`` is the number
+    of regression variables along the wavelength/vertical dimension used for kernel inputs and/or mean function inputs.
     Similarly ``x_t`` is assumed to lie along the time/horizontal dimension of the observed data with shape ``(N_t,)`` or
-    ``(d_t, N_t)`` where ``d_t`` is the number of regression variables along the column dimension used as kernel inputs
-    and/or mean function inputs.
+    ``(d_t, N_t)`` where ``N_t`` is the number of columns of ``Y`` and ``d_t`` is the number of regression variables
+    along the column dimension used as kernel inputs and/or mean function inputs.
 
     Args:
         kf (Kernel): Kernel object which has already been initialised with the desired kernel function.
@@ -134,12 +134,12 @@ class GP(object):
         
         Returns:
             PyTree: Stored values from the decomposition of the covariance matrix. The specific
-                values contained in this PyTree depend on the choice of Kernel object and are returned by the
-                decomp_fn method of each :class:`Kernel` class.
+            values contained in this PyTree depend on the choice of Kernel object and are returned by the
+            decomp_fn method of each :class:`Kernel` class.
             
         """
         
-        return self.kf.decomp_fn(p, self.x_l, self.x_t, storage_dict = {})
+        return self.kf.decomp_fn(p, self.x_l, self.x_t, stored_values = {})
     
     
     def logL(
@@ -166,7 +166,7 @@ class GP(object):
         # Use the specific log likelihood calculation of the chosen Kernel object
         # to compute the log likelihood and any stored values from the decomposition
         # are also returned by default but not returned by this method
-        logL, storage_dict = self.kf.logL(p, self.x_l, self.x_t, R, {})
+        logL, stored_values = self.kf.logL(p, self.x_l, self.x_t, R, {})
         
         return logL
 
@@ -175,7 +175,7 @@ class GP(object):
         self,
         p: PyTree,
         Y: JAXArray,
-        storage_dict: PyTree,
+        stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
         """Computes the log likelihood and also returns any stored values from the decomposition of
         the covariance matrix. This allows time to be saved in future log likelihood calculations in
@@ -186,7 +186,7 @@ class GP(object):
             p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
                 in addition to any mean function parameters which may be needed to calculate the mean function.
             Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            storage_dict (PyTree): Stored values from the decomposition of the covariance matrix. The specific
+            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
                 values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
                 ``Kernel.decomp_fn``.
         
@@ -198,9 +198,9 @@ class GP(object):
         """
         
         R = Y - self.mf(p, self.x_l, self.x_t)
-        logL, storage_dict = self.kf.logL(p, self.x_l, self.x_t, R, storage_dict)
+        logL, stored_values = self.kf.logL(p, self.x_l, self.x_t, R, stored_values)
     
-        return logL, storage_dict
+        return logL, stored_values
 
     
     def logP(
@@ -223,7 +223,7 @@ class GP(object):
         """
         
         R = Y - self.mf(p, self.x_l, self.x_t)
-        logL, storage_dict = self.kf.logL(p, self.x_l, self.x_t, R, {})
+        logL, stored_values = self.kf.logL(p, self.x_l, self.x_t, R, {})
         
         logPrior = self.logPrior(p)
         logP = logPrior + logL
@@ -235,7 +235,7 @@ class GP(object):
         self,
         p: PyTree,
         Y: JAXArray,
-        storage_dict: PyTree,
+        stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
         """Computes the log posterior and also returns any stored values from the decomposition of the
         covariance matrix. This allows time to be saved in future log likelihood calculations in
@@ -247,7 +247,7 @@ class GP(object):
                 in addition to any mean function parameters which may be needed to calculate the mean function.
                 Also input to the logPrior function for the calculation of the log priors.
             Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            storage_dict (PyTree): Stored values from the decomposition of the covariance matrix. The specific
+            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
                 values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
                 ``Kernel.decomp_fn``.
         
@@ -260,12 +260,12 @@ class GP(object):
 
         
         R = Y - self.mf(p, self.x_l, self.x_t)
-        logL, storage_dict = self.kf.logL(p, self.x_l, self.x_t, R, storage_dict)
+        logL, stored_values = self.kf.logL(p, self.x_l, self.x_t, R, stored_values)
         
         logPrior = self.logPrior(p)
         logP = logPrior + logL
         
-        return logP, storage_dict
+        return logP, stored_values
 
     
     def predict(
@@ -533,7 +533,7 @@ class GP(object):
             
         Returns:
             JAXArray or (JAXArray, plt.Figure): Returns the autocorrelation matrix of the residuals. If
-            ``plot = True`` then will also return the ``plt.Figure`` generated.
+            ``plot = True`` then will return a tuple with the generated ``plt.Figure`` also added.
         
         """
         
@@ -669,7 +669,7 @@ class GP(object):
         R = Y - self.mf(p, self.x_l, self.x_t)
         
         # Calculate log likelihood and stored values from decomposition
-        logL, storage_dict = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, {})
+        logL, stored_values = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, {})
         
         return logL
 
@@ -678,7 +678,7 @@ class GP(object):
         self,
         p: PyTree,
         Y: JAXArray,
-        storage_dict: PyTree,
+        stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
         """Computes the log likelihood and also returns any stored values from the
         decomposition of the covariance matrix. This function is slower for gradient calculations
@@ -690,7 +690,7 @@ class GP(object):
             p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
                 in addition to any mean function parameters which may be needed to calculate the mean function.
             Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            storage_dict (PyTree): Stored values from the decomposition of the covariance matrix. The specific
+            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
                 values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
                 ``Kernel.decomp_fn``.
         
@@ -705,9 +705,9 @@ class GP(object):
         R = Y - self.mf(p, self.x_l, self.x_t)
         
         # Calculate log likelihood and stored values from decomposition
-        logL, storage_dict = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, {})
+        logL, stored_values = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, {})
     
-        return logL, storage_dict
+        return logL, stored_values
     
     
     def logP_hessianable(
@@ -734,7 +734,7 @@ class GP(object):
         
         logPrior = self.logPrior(p)
         R = Y - self.mf(p, self.x_l, self.x_t)
-        logL, storage_dict = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, {})
+        logL, stored_values = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, {})
         logP = logPrior + logL
         
         return logP
@@ -744,7 +744,7 @@ class GP(object):
         self,
         p: PyTree,
         Y: JAXArray,
-        storage_dict: PyTree,
+        stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
         """Computes the log posterior and also returns any stored values from the decomposition of the
         covariance matrix.
@@ -760,7 +760,7 @@ class GP(object):
                 in addition to any mean function parameters which may be needed to calculate the mean function.
                 Also input to the logPrior function for the calculation of the log priors.
             Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            storage_dict (PyTree): Stored values from the decomposition of the covariance matrix. The specific
+            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
                 values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
                 ``Kernel.decomp_fn``.
         
@@ -773,12 +773,12 @@ class GP(object):
 
         
         R = Y - self.mf(p, self.x_l, self.x_t)
-        logL, storage_dict = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, storage_dict)
+        logL, stored_values = self.kf.logL_hessianable(p, self.x_l, self.x_t, R, stored_values)
         
         logPrior = self.logPrior(p)
         logP = logPrior + logL
         
-        return logP, storage_dict
+        return logP, stored_values
     
 
     
@@ -793,6 +793,7 @@ class GP(object):
         return_array: Optional[bool] = False,
         large: Optional[bool] = False,
         large_block_size: Optional[int] = 50,
+        large_jit: Optional[bool] = True,
         hessian_mat: Optional[JAXArray] = None,
     ) -> Tuple[Union[PyTree, JAXArray], list]:
         r"""Computes the Laplace approximation at the location of ``p`` with options to regularise
@@ -841,6 +842,8 @@ class GP(object):
             large_block_size (int, optional): If large is set to True and the hessian is being calculated in groups of rows
                 can specify how many rows are being calculated simultaneously. Large numbers may calculate the overall hessian
                 faster but at greater memory cost.
+            large_jit (bool, optional): Whether to JIT compile the hessian function when ``large = True``,
+                can speed up the calculation assuming the function can be JIT compiled. Defaults to ``True``.
             hessian_mat (JAXArray, optional): Instead of calculating the hessian matrix (needed for the Laplace approximation)
                 from the input parameters ``p`` and ``Y`` just provide the hessian matrix directly.
                 Assumed to be a JAXArray and not a PyTree. The input parameters ``p`` and ``Y`` will be ignored.
@@ -861,48 +864,90 @@ class GP(object):
         p_vary, make_p = varying_params_wrapper(p, vars = vars, fixed_vars = fixed_vars)
 
         if hessian_mat is None:
-
+            # Generate a wrapper function which takes only the parameters being varied and
+            # calculates the log posterior (this avoids calculating derivatives of fixed parameters)
             logP_hessianable_wrapper = lambda p_vary: self.logP_hessianable(make_p(p_vary), Y)
             
             if large:
-                hessian_mat = large_hessian_calc(logP_hessianable_wrapper, p_vary, block_size = large_block_size)
+                # For large data sets and many free parameters, breaking up the hessian calculation
+                # into blocks of rows of size large_block_size has a much lower memory cost
+                hessian_mat = large_hessian_calc(logP_hessianable_wrapper, p_vary, block_size = large_block_size,
+                                                 return_array = True, jit = large_jit)
             else:
+                # If memory cost is not an issue then directly calculating the full hessian is faster
                 hessian_mat = jax.hessian(logP_hessianable_wrapper)(p_vary)
+                
+                # For inverting to a covariance matrix we need to convert the nested PyTree returned by
+                # jax.hessian into a matrix which we can do with this helper function from luas.jax_convenience_fns
                 hessian_mat = pytree_to_array_2D(p_vary, hessian_mat)
                 
+        # Help symmetrise matrix which can help mitigate numerical errors
         hessian_mat = (hessian_mat + hessian_mat.T)/2.
+        
+        # Performs the actual Laplace approximation by inverting the negative hessian
         cov_mat = jnp.linalg.inv(-hessian_mat)
         
         if regularise:
+            # Test if the diagonals of the covariance matrix are positive
             cov_diag = jnp.diag(cov_mat)
             neg_ind = cov_diag < 0.
             num_neg_diag_vals = neg_ind.sum()
             
-            regularise_vec = -regularise_const*neg_ind
-            hessian_mat += jnp.diag(regularise_vec)
-            cov_mat = jnp.linalg.inv(-hessian_mat)
+            if num_neg_diag_vals == 0:
+                print("No regularisation needed to produce remove negative values along diagonal of covariance matrix.")
+            else:
+                # Subtract regularise_const from the diagonal hessian elements which correspond to negative
+                # values in the covariance matrix which will help to regularise for large enough regularise_const
+                regularise_vec = regularise_const*neg_ind
+                hessian_mat -= jnp.diag(regularise_vec)
 
-            p_arr, make_p_dict = ravel_pytree(p_vary)
-            regularised_values = make_p_dict(neg_ind)
-            
-            for par in p_vary.keys():
-                if not jnp.any(regularised_values[par]):
-                    del regularised_values[par]
-            
-            cov_diag = jnp.diag(cov_mat)
-            neg_ind = cov_diag < 0.
-            num_neg_diag_vals_remaining = neg_ind.sum()
+                # Calculate the new Laplace approximation with regularisation
+                cov_mat = jnp.linalg.inv(-hessian_mat)
+
+                # Help to describe which values were regularised
+                # Identifies which parameters the negative diagonal elements correspond to
+                p_arr, make_p_dict = ravel_pytree(p_vary)
+                regularised_values = make_p_dict(neg_ind)
+
+                # Only include values which needed to be regularised when printing
+                for par in p_vary.keys():
+                    if not jnp.any(regularised_values[par]):
+                        del regularised_values[par]
+
+                # Check if there are any remaining negative values along the diagonal of the covariance matrix
+                cov_diag = jnp.diag(cov_mat)
+                neg_ind = cov_diag < 0.
+                num_neg_diag_vals_remaining = neg_ind.sum()
+                
+                if num_neg_diag_vals_remaining > 0:
+                    # Identify which parameters are still resulting in negatives along the diagonal
+                    values_still_negative = make_p_dict(neg_ind)
                     
-            print(f"Initial number of negative values on diagonal of covariance matrix = {num_neg_diag_vals}\n" \
-                  f"Corresponding to parameters: {regularised_values}.\n" \
-                  f"Remaining number of negative values = {num_neg_diag_vals_remaining}."
-                 )
-
+                    # Only include values which still need to be regularised when printing
+                    for par in p_vary.keys():
+                        if not jnp.any(values_still_negative[par]):
+                            del values_still_negative[par]
+                            
+                    print(f"Initial number of negative values on diagonal of covariance matrix = {num_neg_diag_vals}\n" \
+                          f"Corresponding to parameters: {regularised_values}.\n" \
+                          f"Remaining number of negative values = {num_neg_diag_vals_remaining}\n" \
+                          f"Corresponding to parameters: {values_still_negative}.\n"
+                          f"Try increasing regularise_const to ensure the covariance matrix is positive definite " \
+                          f"or double check that the input parameters are close to a best-fit location."
+                         )
+                else:
+                    print(f"Initial number of negative values on diagonal of covariance matrix = {num_neg_diag_vals}\n" \
+                          f"Corresponding to parameters: {regularised_values}.\n" \
+                          f"No remaining negative values."
+                         )
+        
+        # Generate the list which gives the order of the parameters in the covariance matrix
         ordered_param_list = order_list(list(p_vary.keys()))
         
         if return_array:
             return cov_mat, ordered_param_list
         else:
+            # If returning a nested PyTree use array_to_pytree_2D to convert
             return array_to_pytree_2D(p_vary, cov_mat), ordered_param_list
     
     
@@ -915,8 +960,10 @@ class GP(object):
         fixed_vars: Optional[list] = None,
         large: Optional[bool] = False,
         large_block_size: Optional[int] = 50,
+        return_array: Optional[bool] = False,
+        large_jit: Optional[bool] = True,
         **kwargs,
-    ):
+    ) -> Tuple[Union[PyTree, JAXArray], list]:
         """Computes the Laplace approximation at the location of ``p`` but within the transformed
         parameter space used by ``PyMC`` and ``NumPyro`` to deal with parameters bounded by a lower and upper bound.
         
@@ -946,37 +993,66 @@ class GP(object):
             large_block_size (int, optional): If large is set to True and the hessian is being calculated in groups of rows
                 can specify how many rows are being calculated simultaneously. Large numbers may calculate the overall hessian
                 faster but at greater memory cost.
+            large_jit (bool, optional): Whether to JIT compile the hessian function when ``large = True``,
+                can speed up the calculation assuming the function can be JIT compiled. Defaults to ``True``.
+            return_array (bool, optional): Whether to return the approximated covariance matrix as a JAXArray or
+                as a nested PyTree where e.g. the covariance between parameters named p1 and p2 is given by
+                ``cov_mat[p1][p2]`` and ``cov_mat[p2][p1]``.
                 
         Returns:
-            JAXArray or PyTree: Depending on whether return_array is set to True will either return the covariance matrix from
-                the Laplace approximation as either a JAXArray or a PyTree.
-            list: The order of the parameters in the returned covariance matrix if ``return_array = True``
-                as a ``list`` of the key names.
-                This list is also returned if ``return_array = False`` for consistency. The order of the ``list``
-                matches that given by the ``jax.flatten_util.ravel_pytree`` function.
+            (JAXArray, :obj:`list` of :obj:`str`) or (PyTree, :obj:`list` of :obj:`str`): Returns a tuple of two elements,
+            if ``return_array = True`` the first element will be the covariance matrix from the Laplace approximation
+            as a JAXArray, otherwise it will be as a nested PyTree. The second element will be the order of the parameters
+            in the returned covariance matrix if it is a JAXArray. This list is also returned when ``return_array = False``
+            for consistency. The order of the list matches how ``jax.flatten_util.ravel_pytree`` will order keys from a PyTree.
+            
         """
 
+        # This function returns a PyTree p_vary which has only the (key, value) pairs of
+        # parameters being varied
+        # make_p is also returned which is a function with returns the parameters in p_vary
+        # with all fixed parameters added back in
         p_vary, make_p = varying_params_wrapper(p, vars = vars, fixed_vars = fixed_vars)
+        
+        # Transform the parameters being varied to the transformed values which are sampled by
+        # PyMC and NumPyro
         p_transf = transf_to_unbounded_params(p_vary, param_bounds)
+        
+        # Create a function which returns the transformed values back to the full set of parameters
+        # untransformed including fixed parameters
         def transf_back_to_p(p_transf):
             p_vary = transf_from_unbounded_params(p_transf, param_bounds)
             return make_p(p_vary)
 
+        # Write a wrapper function which takes the transformed parameters and calculates the log Posterior
         pymc_logP_hessianable = lambda p_transf: self.logP_hessianable(transf_back_to_p(p_transf), Y)
 
         if large:
-            hessian_mat = large_hessian_calc(pymc_logP_hessianable, p_transf, block_size = large_block_size, return_array = False)
+            # For large data sets and many free parameters, breaking up the hessian calculation
+            # into blocks of rows of size large_block_size has a much lower memory cost
+            hessian_mat = large_hessian_calc(pymc_logP_hessianable, p_transf, block_size = large_block_size,
+                                             return_array = False, jit = large_jit)
         else:
+            # If memory cost is not an issue then directly calculating the full hessian is faster
             hessian_mat = jax.hessian(pymc_logP_hessianable)(p_transf)
         
+        # Loop over each parameter being varied
         for par in p_transf.keys():
+            # Select just the bounded parameters
             if par in param_bounds.keys():
+                # Add to the diagonal of the hessian an additional term
+                # which is equal to the hessian of the jacobian of the transformation
+                # performed by PyMC and NumPyro
+                # This term is added to ensure the transformation these inference libraries perform
+                # does not impact the choice of priors made
                 exp_minus_p = jnp.exp(-p_transf[par])
                 hessian_of_transform_jacobian = jnp.diag(-2*exp_minus_p/(1+exp_minus_p)**2)
                 hessian_mat[par][par] += hessian_of_transform_jacobian
 
+        # Convert hessian from a nested PyTree to a 2D JAXArray for GP.laplace_approx to be able
+        # to invert to calculate the covariance matrix
         hessian_mat = pytree_to_array_2D(p_transf, hessian_mat)
-        
-        cov_mat, ordered_param_list = self.laplace_approx(p_transf, Y, hessian_mat = hessian_mat, **kwargs)
+        cov_mat, ordered_param_list = self.laplace_approx(p_transf, Y, hessian_mat = hessian_mat,
+                                                          return_array = return_array, **kwargs)
             
         return cov_mat, ordered_param_list

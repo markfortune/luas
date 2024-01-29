@@ -13,10 +13,11 @@ This package was originally developed for use in fitting systematics in transiti
 ## Where to get started
 
 ```{toctree}
-:maxdepth: 3
+:maxdepth: 2
 getting_started
 tutorials
 api
+GitHub repository <https://github.com/markfortune/luas>
 ```
 
 ## License and Citing

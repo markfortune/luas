@@ -28,6 +28,7 @@ def evaluate_kernel(kernel_fn: Callable, x: JAXArray, y: JAXArray, *args) -> JAX
     
     Returns:
         JAXArray: The constructed covariance matrix
+        
     """
     
     K = vmap(lambda x1: vmap(lambda y1: kernel_fn(x1, y1, *args))(y))(x)
@@ -48,6 +49,7 @@ def distanceL1(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     Returns:
         Scalar: L1 norm between two input vectors
+        
     """
     
     return jnp.sum(jnp.abs(x - y)/L)
@@ -67,6 +69,7 @@ def distanceL2Sq(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     Returns:
         Scalar: L2 norm between two input vectors
+        
     """
     
     return jnp.sum(jnp.square(x - y)/L**2)
@@ -87,6 +90,7 @@ def squared_exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     Returns:
         Scalar: Covariance between two input vectors
+        
     """
     
     return evaluate_kernel(squared_exp_calc, x, y, L)
@@ -94,6 +98,7 @@ def squared_exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     
 def squared_exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     """Function used by ``luas.kernels.squared_exp`` to evaluate the squared exponential kernel function. 
+    
     """
 
     tau_sq = distanceL2Sq(x, y, L)
@@ -101,7 +106,7 @@ def squared_exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 
 def exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    r"""Exponential kernel function, used with ``luas.kernels.evaluate_kernel``
+    r"""Exponential kernel function, also known as the Matern 1/2 kernel, used with ``luas.kernels.evaluate_kernel``
     to build covariance matrices.
     
     .. math::
@@ -115,6 +120,7 @@ def exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     Returns:
         Scalar: Covariance between two input vectors
+        
     """
     
     return evaluate_kernel(exp_calc, x, y, L)
@@ -122,6 +128,7 @@ def exp(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 def exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     """Function used by ``luas.kernels.exp`` to evaluate the Exponential kernel function. 
+    
     """
 
     delta_t = distanceL1(x, y, L).sum()
@@ -143,6 +150,7 @@ def matern32(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     Returns:
         Scalar: Covariance between two input vectors
+        
     """
     
     return evaluate_kernel(matern32_calc, x, y, L)
@@ -150,6 +158,7 @@ def matern32(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 def matern32_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     """Function used by matern32 to evaluate the Matern 3/2 kernel function. 
+    
     """
 
     delta_t = jnp.sqrt(3)*distanceL1(x, y, L).sum()
@@ -171,6 +180,7 @@ def matern52(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     Returns:
         Scalar: Covariance between two input vectors
+        
     """
     
     return evaluate_kernel(matern52_calc, x, y, L)
@@ -178,6 +188,7 @@ def matern52(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 def matern52_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     """Function used by matern52 to evaluate the Matern 5/2 kernel function. 
+    
     """
 
     delta_t = jnp.sqrt(5)*distanceL1(x, y, L).sum()
@@ -200,12 +211,14 @@ def rational_quadratic(x: JAXArray, y: JAXArray, L: Scalar, alpha: Scalar) -> JA
         
     Returns:
         Scalar: Covariance between two input vectors
+        
     """
     return evaluate_kernel(rational_quadratic_calc, x, y, L, alpha)
 
 
 def rational_quadratic_calc(x: JAXArray, y: JAXArray, L: Scalar, alpha: Scalar) -> JAXArray:
     """Function used by rational_quadratic to evaluate the rational quadratic kernel function. 
+    
     """
 
     tau_sq = distanceL2Sq(x, y, L).sum()
@@ -228,13 +241,15 @@ def exp_sine_squared(x: JAXArray, y: JAXArray, L: Scalar, P: Scalar) -> JAXArray
         
     Returns:
         JAXArray: Covariance between two input vectors
+        
     """
     
     return evaluate_kernel(exp_sine_squared_calc, x, y, L, P)
 
 
 def exp_sine_squared_calc(x: JAXArray, y: JAXArray, L: Scalar, P: Scalar) -> JAXArray:
-    """Function used by exp_sine_squared to evaluate the exponential sine squared kernel function. 
+    """Function used by exp_sine_squared to evaluate the exponential sine squared kernel function.
+    
     """
 
     tau_sq = (jnp.sum(jnp.square(jnp.sin(jnp.pi*(x - y)/P)/L))).sum()
@@ -252,6 +267,7 @@ def cosine(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
         
     Returns:
         JAXArray: Covariance between two input vectors
+        
     """
     
     return evaluate_kernel(cosine_calc, x, y, L)
@@ -259,6 +275,7 @@ def cosine(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 
 def cosine_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     """Function used by cosine to evaluate the cosine kernel function. 
+    
     """
         
     delta_t = distanceL1(x, y, L).sum()

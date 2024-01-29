@@ -1,6 +1,6 @@
-from .GeneralKernel import GeneralKernel
-from .LuasKernel import LuasKernel
-from .GP import GP
+from .GeneralKernel import GeneralKernel as GeneralKernel
+from .LuasKernel import LuasKernel as LuasKernel
+from .GP import GP as GP
 from .kernels import (
     squared_exp,
     exp,

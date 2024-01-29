@@ -48,7 +48,7 @@ html_theme_options = {
         "notebook_interface": "jupyterlab",
         "colab_url": "https://colab.research.google.com/",
     },
-    "show_navbar_depth": 3,
+    "show_navbar_depth": 2,
     "home_page_in_toc": True,
     "use_edit_page_button": False,
     "use_issues_button": False,

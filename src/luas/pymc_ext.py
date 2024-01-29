@@ -31,12 +31,12 @@ def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, j
     
     Args:
         name (str): Name of observable storing likelihood values e.g. "log_like".
-        gp (object): The luas.GPClass.GP object used for log likelihood calculations.
-        var_dict (PyTree): A dictionary of parameter values for calculating the log likelihood
+        gp (object): The ``GP`` object used for log likelihood calculations.
+        var_dict (PyTree): A PyTree of parameter values for calculating the log likelihood.
         Y (JAXArray): Data values being fit.
         likelihood_fn (Callable, optional): Can specify a different log likelihood function other than the default of
-            GP.logP_stored. Needs to take the same inputs and give the same order of outputs as GP.logP_stored.
-        jit (bool, optional): Whether to jit compile the likelihood function, as PyMC does not require the
+            ``GP.logP_stored``. Needs to take the same inputs and give the same order of outputs as ``GP.logP_stored``.
+        jit (bool, optional): Whether to jit compile the likelihood function, as ``PyMC`` does not require the
             log likelihood to be jit compiled. Defaults to True.
     
     """
@@ -67,7 +67,7 @@ def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, j
 
     # This is the likelihood function which can take an array of parameters and send to the
     # likelihood function as a PyTree of input parameters
-    logP_fn = lambda p_arr, storage_dict: likelihood_fn(make_p_dict(p_arr), Y, storage_dict)
+    logP_fn = lambda p_arr, stored_values: likelihood_fn(make_p_dict(p_arr), Y, stored_values)
 
     # Generate a likelihood function which will return the value of the log-likelihood
     # as well as the gradients of each parameter. 
@@ -91,8 +91,8 @@ def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, j
 
     
 class LuasPyMCWrapper(Op):
-    """Wrapper for log-likelihood calculations used by LuasGP which depending on the version of PyMC 
-    uses either Aesara or PyTensor. Taken from the PyMC tutorial "How to wrap a JAX function for use in PyMC"
+    """Wrapper for log-likelihood calculations used by ``LuasGP`` which depending on the version of ``PyMC`` 
+    uses either ``Aesara`` or ``PyTensor``. Taken from the ``PyMC`` tutorial 'How to wrap a JAX function for use in PyMC'
     (https://www.pymc.io/projects/examples/en/latest/howto/wrapping_jax_function.html).
     
     """
@@ -100,7 +100,7 @@ class LuasPyMCWrapper(Op):
 
     def __init__(self, value_and_grad_logP_fn):
     
-        self.storage_dict = {} # Stores the decomposition of the covariance matrix
+        self.stored_values = {} # Stores the decomposition of the covariance matrix
         
         # function which returns the value and the gradients of the log likelihood
         self.v_and_g_logP = value_and_grad_logP_fn
@@ -118,7 +118,7 @@ class LuasPyMCWrapper(Op):
         
         # Returns the value of the log likelihood, stored decomposition of the covariance matrix
         # and the gradients of the log likelihood in a single function call
-        (result, self.storage_dict), grad_result = self.v_and_g_logP(*inputs, self.storage_dict)
+        (result, self.stored_values), grad_result = self.v_and_g_logP(*inputs, self.stored_values)
         
         outputs[0][0] = np.asarray(result, dtype=node.outputs[0].dtype)
         outputs[1][0] = np.asarray(grad_result, dtype=node.outputs[1].dtype)
