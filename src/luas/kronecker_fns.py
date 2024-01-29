@@ -94,6 +94,7 @@ def K_inv_vec(
     correct results.
     
     Works by computing:
+    
     .. math::
 
         K^{-1} \vec{r} = [\mathbf{W}_\lambda \otimes \mathbf{W}_t] D^{-1} [\mathbf{W}_\lambda^T \otimes \mathbf{W}_t^T] \vec{r}
@@ -124,10 +125,11 @@ def K_inv_vec_derivative(
     primals: Tuple[JAXArray, PyTree],
     tangents: Tuple[JAXArray, PyTree],
 ) -> Tuple[JAXArray, JAXArray]:
-    """Custom derivative of ``K_inv_vec`` defined because automatic differentiation can fail to give a numerically stable result
+    r"""Custom derivative of ``K_inv_vec`` defined because automatic differentiation can fail to give a numerically stable result
     in some situations.
     
     Works by computing:
+    
     .. math::
 
        \frac{\partial K^{-1} \vec{r}}{\partial p} = - K^{-1} \frac{\partial K}{\partial p} K^{-1} \vec{r} + K^{-1} \frac{\partial \vec{r}}{\partial p}
@@ -192,10 +194,11 @@ def r_K_inv_r_derivative(
     primals: Tuple[JAXArray, PyTree],
     tangents: Tuple[JAXArray, PyTree],
 ) -> Tuple[Scalar, Scalar]:
-    """Custom derivative of ``r_K_inv_r`` defined because automatic differentiation can fail to give a numerically stable result
+    r"""Custom derivative of ``r_K_inv_r`` defined because automatic differentiation can fail to give a numerically stable result
     in some situations.
     
     Works by computing:
+    
     .. math::
 
        \frac{\partial \vec{r}^T K^{-1} \vec{r}}{\partial p} = - \vec{r}^T K^{-1} \frac{\partial K}{\partial p} K^{-1} \vec{r}

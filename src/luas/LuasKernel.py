@@ -126,7 +126,18 @@ class LuasKernel(Kernel):
     The ``Kt`` and ``St`` functions should both return ``(N_t, N_t)`` matrices which will by the covariance
     matrices in the time/horizontal direction.
     
-    See 
+    .. code-block:: python
+
+        >>> from luas import LuasKernel, kernels
+        >>> def Kl_fn(hp, x_l1, x_l2, wn = True):
+        >>> ... return hp["h"]**2*kernels.squared_exp(x_l1, x_l2, hp["l_l"])
+        >>> def Kt_fn(hp, x_t1, x_t2, wn = True):
+        >>> ... return kernels.squared_exp(x_t1, x_t2, hp["l_t"])
+        >>> # ... And similarly for Sl_fn, St_fn
+        >>> kernel = LuasKernel(Kl = Kl_fn, Kt = Kt_fn, Sl = Sl_fn, St = St_fn)
+        ... )
+    
+    See https://luas.readthedocs.io/en/latest/tutorials.html for more detailed tutorials on how to use.
         
     Args:
         Kl (Callable): Function which returns the covariance matrix Kl, should be of the form

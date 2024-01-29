@@ -58,6 +58,17 @@ class GeneralKernel(Kernel):
         The :class:`LuasKernel` class should provide significant runtime savings if the covariance matrix
         has kronecker product structure in each dimension except in cases where one of the dimensions
         is very small or a sum of more than two kronecker products is needed.
+        
+    .. code-block:: python
+
+        >>> from luas import GeneralKernel, kernels
+        >>> def K_fn(hp, x_l1, x_l2, x_t1, x_t2, wn = True):
+        >>> ... Kl = hp["h"]**2*kernels.squared_exp(x_l1, x_l2, hp["l_l"])
+        >>> ... Kt = kernels.squared_exp(x_l1, x_l2, hp["l_t"])
+        >>> ... K = jnp.kron(Kl, Kt)
+        >>> ... return K
+        >>> kernel = GeneralKernel(K = K_fn)
+        ... )
     
     Args:
         K (Callable, optional): Function which returns the covariance matrix ``K``.

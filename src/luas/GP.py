@@ -53,7 +53,7 @@ class GP(object):
             May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different time/horizontal
             regression variables.
         mf (Callable, optional): The deterministic mean function, by default returns a JAXArray of zeros.
-            Needs to be in the format ``mf(p, x_l, x_t)`` and returns a JAXArray of shape ``(N_l, N_t)``.
+            Needs to be in the format ``mf(params, x_l, x_t)`` and returns a JAXArray of shape ``(N_l, N_t)``.
             matching the shape of the observed data Y.
         logPrior (Callable, optional): Log prior function, by default returns zero.
             Needs to be in the format ``logPrior(params)`` and return a scalar.
