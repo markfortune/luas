@@ -256,28 +256,32 @@ def exp_sine_squared_calc(x: JAXArray, y: JAXArray, L: Scalar, P: Scalar) -> JAX
     return jnp.exp(-2.0 * tau_sq)
     
 
-def cosine(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    """Cosine kernel, used with ``luas.kernels.evaluate_kernel``
+def cosine(x: JAXArray, y: JAXArray, P: Scalar) -> JAXArray:
+    r"""Cosine kernel, used with ``luas.kernels.evaluate_kernel``
     to build covariance matrices which have periodic covariance.
+    
+    .. math::
+
+        k(x, y) = \cos\Bigg(\frac{2\pi|x - y|}{P}\Bigg)
     
     Args:
         x (JAXArray): Input vector 1
         y (JAXArray): Input vector 2
-        l (Scalar): Length scale
+        P (Scalar): Period
         
     Returns:
         JAXArray: Covariance between two input vectors
         
     """
     
-    return evaluate_kernel(cosine_calc, x, y, L)
+    return evaluate_kernel(cosine_calc, x, y, P)
 
 
-def cosine_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
+def cosine_calc(x: JAXArray, y: JAXArray, P: Scalar) -> JAXArray:
     """Function used by cosine to evaluate the cosine kernel function. 
     
     """
         
-    delta_t = distanceL1(x, y, L).sum()
+    delta_t = distanceL1(x, y, P).sum()
     return jnp.cos(2*jnp.pi*delta_t)
 

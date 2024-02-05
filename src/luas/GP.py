@@ -182,6 +182,11 @@ class GP(object):
         which some hyperparameters are either fixed or being sampled separately with Gibbs/Blocked Gibbs
         sampling.
         
+        Note:
+            This function will not give correct second order derivatives/hessian values (e.g. calculated
+            using `jax.hessian`). Make sure to use `GP.logL_hessianable_stored` if any hessian calculations
+            are required.
+        
         Args:
             p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
                 in addition to any mean function parameters which may be needed to calculate the mean function.
@@ -241,6 +246,11 @@ class GP(object):
         covariance matrix. This allows time to be saved in future log likelihood calculations in
         which some hyperparameters are either fixed or being sampled separately with Gibbs/Blocked Gibbs
         sampling.
+        
+        Note:
+            This function will not give correct second order derivatives/hessian values (e.g. calculated
+            using `jax.hessian`). Make sure to use `GP.logP_hessianable_stored` if any hessian calculations
+            are required.
         
         Args:
             p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
@@ -366,7 +376,7 @@ class GP(object):
         
         # Residuals after subtraction of the GP mean are normalised based on their predicted uncertainties
         res = Y - gp_mean
-        Z = jnp.abs(res/jnp.sqrt(sigma_diag))
+        Z = jnp.abs(res/sigma_diag)
         
         # Identify outliers above given significance level
         outliers = Z > sigma

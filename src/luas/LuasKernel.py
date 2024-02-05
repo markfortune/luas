@@ -527,6 +527,7 @@ class LuasKernel(Kernel):
 
         return  logL, stored_values
         
+
     
     def predict(
         self,
@@ -537,7 +538,6 @@ class LuasKernel(Kernel):
         x_t_pred: JAXArray,
         R: JAXArray,
         M_s: JAXArray,
-        stored_values: Optional[PyTree] = {},
         wn = True,
         return_std_dev = True,
     ) -> Tuple[JAXArray, JAXArray]:
@@ -565,7 +565,7 @@ class LuasKernel(Kernel):
         Note:
             The calculation of the full predictive covariance matrix when ``return_std_dev = False``
             is still experimental and may come with numerically stability issues. It is also very
-            memory intensive and may cause code to crash.
+            memory intensive and may cause code to crash. Future updates to luas may improve this.
         
         Args:
             hp (Pytree): Hyperparameters needed to build the covariance matrices
@@ -589,9 +589,6 @@ class LuasKernel(Kernel):
             M_s (JAXArray): Mean function evaluated at the locations of the predictions ``x_l_pred``, ``x_t_pred``.
                 Must have shape ``(N_l_pred, N_t_pred)`` where ``N_l_pred`` is the number of wavelength/vertical
                 dimension predictions and ``N_t_pred`` the number of time/horizontal dimension predictions.
-            stored_values (PyTree): Stored values from the decomposition of the covariance matrices. For
-                :class:`LuasKernel` this consists of values computed using the eigendecomposition
-                of each matrix and also the log determinant of ``K``.
             wn (bool, optional): Whether to include white noise in the uncertainty at the predicted locations.
                 Defaults to True.
             return_std_dev (bool, optional): If ``True`` will return the standard deviation of uncertainty at the predicted
@@ -605,7 +602,7 @@ class LuasKernel(Kernel):
         
         """
         # Calculate the decomposition of K
-        stored_values = self.decomp_fn(hp, x_l, x_t, stored_values = stored_values)
+        stored_values = self.decomp_fn(hp, x_l, x_t)
         
         # Calculate the covariance between the observed and predicted points
         Kl_s = self.Kl(hp, x_l, x_l_pred, wn = False)
@@ -645,43 +642,15 @@ class LuasKernel(Kernel):
             pred_err = jnp.sqrt(pred_err)
             
         else:
-            # Get the length of each prediction dimension
-            N_l_pred = x_l_pred.shape[-1]
-            N_t_pred = x_t_pred.shape[-1]
-
-            # Useful to define to calculate elementwise products between different columns
-            def K_mult(K1, K2):
-                return K1*K2
-            vmap_K_mult = jax.vmap(K_mult, in_axes = (0, None), out_axes = 0)
-
-            # First solve for the predictive covariance but in a matrix that will be
-            # of shape (N_l_pred*N_l_pred, N_t_pred*N_t_pred)
-            cov_wrong_order = jnp.zeros((N_l_pred**2, N_t_pred**2))
-            for (Kl1, Kt1) in [(KW_l, KW_t), (SW_l, SW_t)]:
-                for (Kl2, Kt2) in [(KW_l, KW_t), (SW_l, SW_t)]:
-
-                    Kl_cube = vmap_K_mult(Kl1, Kl2)
-                    Kt_cube = vmap_K_mult(Kt1, Kt2)
-
-                    Kl_cube = Kl_cube.reshape((N_l_pred**2, N_l_pred))
-                    Kt_cube = Kt_cube.reshape((N_t_pred**2, N_t_pred))
-
-                    cov_wrong_order += (Kl_cube @ stored_values["D_inv"] @ Kt_cube.T)
-
-            # Begin reshaping to the correct shape of (N_l_pred*N_t_pred, N_l_pred*N_t_pred)
-            cov_wrong_order = cov_wrong_order.reshape((N_l_pred**2*N_t_pred, N_t_pred))
-            pred_err = jnp.zeros((N_l_pred*N_t_pred, N_l_pred*N_t_pred))
+            # Note very memory intensive!
+            K_W = jnp.kron(KW_l, KW_t) + jnp.kron(SW_l, SW_t)
+            pred_err = -K_W @ jnp.diag(stored_values["D_inv"].ravel()) @ K_W.T
             
-            # Loops through blocks of rows placing elements into the correct order
-            for j in range(N_l_pred):
-                cov_wrt_x_l_j = cov_wrong_order[j*N_l_pred*N_t_pred:(j+1)*N_l_pred*N_t_pred, :]
-                pred_err = pred_err.at[:, j*N_t_pred:(j+1)*N_t_pred].set(-cov_wrt_x_l_j)
-
             # Add the K_ss term
             pred_err += jnp.kron(Kl_ss, Kt_ss) + jnp.kron(Sl_ss, St_ss)
         
         return gp_mean, pred_err
-
+    
 
     def generate_noise(
         self,

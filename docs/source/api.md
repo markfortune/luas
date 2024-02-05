@@ -22,4 +22,5 @@ numpyro_ext
 kernels
 kronecker_fns
 jax_convenience_fns
+exoplanet
 ```

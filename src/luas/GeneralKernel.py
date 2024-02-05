@@ -247,7 +247,6 @@ class GeneralKernel(Kernel):
         x_t_pred: JAXArray,
         R: JAXArray,
         M_s: JAXArray,
-        stored_values: Optional[PyTree] = {},
         wn: Optional[bool] = True,
         return_std_dev: Optional[bool] = True,
     ) -> Tuple[JAXArray, JAXArray, JAXArray]:
@@ -294,8 +293,6 @@ class GeneralKernel(Kernel):
             M_s (JAXArray): Mean function evaluated at the locations of the predictions ``x_l_pred``, ``x_t_pred``.
                 Must have shape ``(N_l_pred, N_t_pred)`` where ``N_l_pred`` is the number of wavelength/vertical
                 dimension predictions and ``N_t_pred`` the number of time/horizontal dimension predictions.
-            stored_values (PyTree, optional): Stored values from the decomposition of the covariance matrix. For the
-                GeneralKernel object this consists of the Cholesky factor and the log determinant of K.
             wn (bool, optional): Whether to include white noise in the uncertainty at the predicted locations.
                 Defaults to True.
             return_std_dev (bool, optional): If ``True`` will return the standard deviation of uncertainty at the predicted
@@ -313,7 +310,7 @@ class GeneralKernel(Kernel):
         N_t_pred = x_t_pred.shape[-1]
         
         # Calculate the decomposition of K for the required K^-1 calculations
-        stored_values = self.decomp_fn(hp, x_l, x_t, stored_values = stored_values)
+        stored_values = self.decomp_fn(hp, x_l, x_t)
             
         # Calculate the covariance between the observed and predicted points
         K_s = self.K(hp, x_l, x_l_pred, x_t, x_t_pred, wn = False)
@@ -329,7 +326,7 @@ class GeneralKernel(Kernel):
         K_inv_R = JLA.solve_triangular(stored_values["L_cho"], alpha, trans = 0)
         
         # Computes the GP predictive mean
-        gp_mean = K_s @ K_inv_R
+        gp_mean = K_s.T @ K_inv_R
         gp_mean = M_s + gp_mean.reshape(N_l_pred, N_t_pred)
         
         # Prepare to calculate K^-1 K_s in the predictive covariance calculation

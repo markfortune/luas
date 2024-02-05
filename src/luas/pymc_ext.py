@@ -24,6 +24,7 @@ else:
 
 __all__ = [
     "LuasPyMC",
+    "LuasPyMCWrapper",
 ]
 
 def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, jit = True):
@@ -38,7 +39,6 @@ def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, j
             ``GP.logP_stored``. Needs to take the same inputs and give the same order of outputs as ``GP.logP_stored``.
         jit (bool, optional): Whether to jit compile the likelihood function, as ``PyMC`` does not require the
             log likelihood to be jit compiled. Defaults to True.
-    
     """
     
     # Default to using the log posterior method of the gp object which can make use of stored decompositions

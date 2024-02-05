@@ -9,7 +9,5 @@ kronecker_fns
    :toctree: summary
    
    kron_prod
-   K_inv_vec
-   r_K_inv_r
-   logdetK_calc
-   logdetK_calc_hessianable
+   make_vec
+   make_mat
