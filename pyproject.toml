@@ -15,11 +15,13 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dynamic = ["version"]
-dependencies = ["jax", "jaxlib", "numpy", "matplotlib", "tqdm"]
+dependencies = ["numpy", "matplotlib", "tqdm"]
 
 [project.optional-dependencies]
 test = ["pytest"]
 docs = [
+    "jax", 
+    "jaxlib",
     "sphinx-book-theme",
     "myst-nb",
     "jaxoplanet",
