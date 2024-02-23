@@ -41,7 +41,7 @@ html_title = 'luas'
 #html_logo = "_static/luas_icon.png"
 html_static_path = ['_static']
 html_theme_options = {
-    "path_to_docs": "docs",
+    "path_to_docs": "docs/source",
     "repository_url": "https://github.com/markfortune/luas",
     "repository_branch": "main",
     "launch_buttons": {
