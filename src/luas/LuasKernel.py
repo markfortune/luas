@@ -470,7 +470,7 @@ class LuasKernel(Kernel):
         # likelihood and its gradient
         rKr = r_K_inv_r(R, stored_values)
         logdetK = logdetK_calc(stored_values)
-        logL = -0.5 * rKr - 0.5 * logdetK  - 0.5 * R.size * jnp.log(2*jnp.pi)
+        logL = - 0.5 * logdetK - 0.5 * R.size * jnp.log(2*jnp.pi) -0.5 * rKr 
 
         return  logL, stored_values
 

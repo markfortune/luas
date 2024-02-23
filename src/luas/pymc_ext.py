@@ -46,7 +46,6 @@ def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, j
     if likelihood_fn is None:
         likelihood_fn = gp.logP_stored
 
-        
     # PyMC requires an array of parameters while the gp object requires a PyTree/dictionary of parameter inputs
     # We therefore use the dictionary of variables to construct a make_p_dict function which can convert
     # an array of parameters into a PyTree

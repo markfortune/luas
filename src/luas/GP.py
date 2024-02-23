@@ -804,6 +804,7 @@ class GP(object):
         large: Optional[bool] = False,
         large_block_size: Optional[int] = 50,
         large_jit: Optional[bool] = True,
+        logP_fn: Optional[Callable] = None,
         hessian_mat: Optional[JAXArray] = None,
     ) -> Tuple[Union[PyTree, JAXArray], list]:
         r"""Computes the Laplace approximation at the location of ``p`` with options to regularise
@@ -866,6 +867,9 @@ class GP(object):
             for consistency. The order of the list matches how ``jax.flatten_util.ravel_pytree`` will order keys from a PyTree.
         
         """
+        
+        if logP_fn is None:
+            logP_fn = self.logP_hessianable
 
         # This function returns a PyTree p_vary which has only the (key, value) pairs of
         # parameters being varied
@@ -876,7 +880,7 @@ class GP(object):
         if hessian_mat is None:
             # Generate a wrapper function which takes only the parameters being varied and
             # calculates the log posterior (this avoids calculating derivatives of fixed parameters)
-            logP_hessianable_wrapper = lambda p_vary: self.logP_hessianable(make_p(p_vary), Y)
+            logP_hessianable_wrapper = lambda p_vary: logP_fn(make_p(p_vary), Y)
             
             if large:
                 # For large data sets and many free parameters, breaking up the hessian calculation
@@ -904,7 +908,7 @@ class GP(object):
             num_neg_diag_vals = neg_ind.sum()
             
             if num_neg_diag_vals == 0:
-                print("No regularisation needed to produce remove negative values along diagonal of covariance matrix.")
+                print("No regularisation needed to remove negative values along diagonal of covariance matrix.")
             else:
                 # Subtract regularise_const from the diagonal hessian elements which correspond to negative
                 # values in the covariance matrix which will help to regularise for large enough regularise_const
