@@ -13,5 +13,5 @@ If you would like to see a sample analysis using `luas` then there are examples 
 
 tutorials/2D_GP_intro
 tutorials/PyMC Example
-tutorials/NumPyro Example
+tutorials/Numpyro Example
 ```

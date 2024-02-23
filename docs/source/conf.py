@@ -58,4 +58,4 @@ html_theme_options = {
 nb_execution_mode = "auto"
 nb_execution_timeout = 60
 nb_merge_streams = True
-nb_execution_excludepatterns = ["2D_GP_intro.ipynb", "NumPyro Example.ipynb", "PyMC Example.ipynb"]
+nb_execution_excludepatterns = ["2D_GP_intro.ipynb", "Numpyro Example.ipynb", "PyMC Example.ipynb"]
