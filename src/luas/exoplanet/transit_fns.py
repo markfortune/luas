@@ -80,6 +80,10 @@ def transit_light_curve(par: PyTree, t: JAXArray) -> JAXArray:
     """Uses the package `jaxoplanet <https://github.com/exoplanet-dev/jaxoplanet>`_ to calculate
     transit light curves using JAX assuming quadratic limb darkening and a simple circular orbit.
     
+    Note:
+        If using this function then make sure to cite jaxoplanet separately as it is an independent
+        package from luas.
+    
     This particular function will only compute a single transit light curve but JAX's vmap function
     can be used to calculate the transit light curve of multiple wavelength bands at once.
     
