@@ -1,5 +1,6 @@
 [project]
 name = "luas"
+version = "0.0.1"
 description = "A library for implementing efficient 2D Gaussian processes"
 authors = [{ name = "Mark Fortune", email = "fortunma@tcd.ie" }]
 readme = "README.md"
@@ -14,7 +15,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
 ]
-dynamic = ["version"]
 dependencies = ["numpy", "matplotlib", "tqdm"]
 
 [project.optional-dependencies]
