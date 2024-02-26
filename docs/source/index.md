@@ -8,7 +8,7 @@
 This package has been implemented using [`jax`](https://github.com/google/jax), which helps to calculate derivatives of the log-likelihood as well as permitting the code to be easily run on either CPU or GPU. See [Working with JAX](things_to_know) for more details.
 :::
 
-These methods could have broad uses for the interpolation of 2D data sets and are likely underutilised within fields such as astronomy where 2D data sets can appear not just from images but also from multiple time-series being joint analysed. The [`LuasKernel`](api-luaskernel) class contains an optimisation which has already been frequently used within computational biology since its introduction in [Rakitsch et al. (2013)](https://proceedings.neurips.cc/paper/2013/hash/59c33016884a62116be975a9bb8257e3-Abstract.html) but has only recently been applied to astronomy in the context of exoplanet transmission spectroscopy (Fortune et al. 2024). See [Why Use Luas?](why_use_luas) for more details on this optimisation and its advantages and see [Luas for Exoplanets](luas_for_exo) for more information on how to use this package for applications within exoplanet astronomy.
+These methods could have broad uses for the interpolation of 2D data sets and are likely underutilised within fields such as astronomy where 2D data sets can appear not just from images but also from multiple time-series being joint analysed. The [`LuasKernel`](api-luaskernel) class contains an optimisation which has already been frequently used within computational biology since its introduction in [Rakitsch et al. (2013)](https://proceedings.neurips.cc/paper/2013/hash/59c33016884a62116be975a9bb8257e3-Abstract.html) but has only recently been applied to astronomy in the context of exoplanet transmission spectroscopy ([Fortune et al. 2024](https://arxiv.org/abs/2402.15204)). See [Why Use Luas?](why_use_luas) for more details on this optimisation and its advantages and see [Luas for Exoplanets](luas_for_exo) for more information on how to use this package for applications within exoplanet astronomy.
 
 ## Overview of Documentation
 
@@ -22,7 +22,27 @@ GitHub repository <https://github.com/markfortune/luas>
 
 ## License and Citing
 
-`luas` is licensed under an MIT license, feel free to use. We hope by making this package freely available and open source it will make it easier for people to account for systematics correlated across two dimensions in data sets, in addition to being helpful for any other applications (e.g. interpolation). If you are using `luas` then please cite our work Fortune et al. (2024).
+`luas` is licensed under an MIT license, feel free to use. We hope by making this package freely available and open source it will make it easier for people to account for systematics correlated across two dimensions in data sets, in addition to being helpful for any other applications (e.g. interpolation).
+
+If you are using `luas` then please cite our work [Fortune et al. (2024)](https://arxiv.org/abs/2402.15204) with the BibTeX provided below:
+
+```
+@ARTICLE{2024arXiv240215204F,
+       author = {{Fortune}, Mark and {Gibson}, Neale P. and {Foreman-Mackey}, Daniel and {Mikal-Evans}, Thomas and {Maguire}, Cathal and {Ramkumar}, Swaetha},
+        title = "{How do wavelength correlations affect your transmission spectrum? Application of a new fast and flexible 2D Gaussian process framework to transiting exoplanet spectroscopy}",
+      journal = {arXiv e-prints},
+     keywords = {Astrophysics - Earth and Planetary Astrophysics, Astrophysics - Instrumentation and Methods for Astrophysics},
+         year = 2024,
+        month = feb,
+          eid = {arXiv:2402.15204},
+        pages = {arXiv:2402.15204},
+archivePrefix = {arXiv},
+       eprint = {2402.15204},
+ primaryClass = {astro-ph.EP},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2024arXiv240215204F},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```
 
 We hope to expand the functionality of `luas` over time and welcome any help to do so. Also, if you encounter any issues, have any requests or questions then feel free to [raise an issue](https://github.com/markfortune/luas/issues) or [send an email](mailto:fortunma@tcd.ie).
 

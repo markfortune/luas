@@ -21,3 +21,5 @@ GeneralKernel
    GeneralKernel.generate_noise
    GeneralKernel.logL
    GeneralKernel.predict
+   GeneralKernel.K_inv_by_vec
+   GeneralKernel.K_by_vec

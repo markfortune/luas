@@ -998,3 +998,73 @@ class LuasKernel(Kernel):
             plt.tight_layout()
 
         return fig
+
+    
+    def K_inv_by_vec(
+        self,
+        hp: PyTree,
+        x_l: JAXArray,
+        x_t: JAXArray,
+        R: JAXArray,
+    ) -> JAXArray:
+        r"""Calculates the product of the inverse of the covariance matrix with a vector, represented by
+        a JAXArray of shape ``(N_l, N_t)``. Useful for testing for numerical stability.
+        
+        Args:
+            hp (Pytree): Hyperparameters needed to build the covariance matrices
+                ``Kl``, ``Kt``, ``Sl``, ``St``. Will be unaffected if additional mean function
+                parameters are also included.
+            x_l (JAXArray): Array containing wavelength/vertical dimension regression variable(s)
+                for the observed locations. May be of shape ``(N_l,)`` or ``(d_l,N_l)`` for ``d_l``
+                different wavelength/vertical regression variables.
+            x_t (JAXArray): Array containing time/horizontal dimension regression variable(s) for the
+                observed locations. May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different
+                time/horizontal regression variables.
+            R (JAXArray): JAXArray of shape ``(N_l, N_t)`` representing the vector to multiply on the right by
+                the inverse of the covariance matrix ``K``.
+                
+        Returns:
+            JAXArray: The result of multiplying the inverse of the covariance matrix ``K`` by the vector ``R``.
+        
+        """
+        
+        # Calculate the decomposition of K
+        stored_values = self.decomp_fn(hp, x_l, x_t, stored_values = {})
+        
+        return K_inv_vec(R, stored_values)
+    
+    
+    def K_by_vec(
+        self,
+        hp: PyTree,
+        x_l: JAXArray,
+        x_t: JAXArray,
+        R: JAXArray,
+    ) -> JAXArray:
+        r"""Calculates the product of the covariance matrix with a vector, represented by a JAXArray of shape ``(N_l, N_t)`.
+        Useful for testing for numerical stability.
+        
+        Args:
+            hp (Pytree): Hyperparameters needed to build the covariance matrices
+                ``Kl``, ``Kt``, ``Sl``, ``St``. Will be unaffected if additional mean function
+                parameters are also included.
+            x_l (JAXArray): Array containing wavelength/vertical dimension regression variable(s)
+                for the observed locations. May be of shape ``(N_l,)`` or ``(d_l,N_l)`` for ``d_l``
+                different wavelength/vertical regression variables.
+            x_t (JAXArray): Array containing time/horizontal dimension regression variable(s) for the
+                observed locations. May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different
+                time/horizontal regression variables.
+            R (JAXArray): JAXArray of shape ``(N_l, N_t)`` representing the vector to multiply on the right by
+                the covariance matrix ``K``.
+                
+        Returns:
+            JAXArray: The result of multiplying the covariance matrix ``K`` by the vector ``R``.
+        
+        """
+        
+        Sl = self.Sl(hp, x_l, x_l)
+        St = self.St(hp, x_t, x_t)
+        Kl = self.Kl(hp, x_l, x_l)
+        Kt = self.Kt(hp, x_t, x_t)
+        
+        return kron_prod(Kl, Kt, R) + kron_prod(Sl, St, R)

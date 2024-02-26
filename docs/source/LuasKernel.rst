@@ -27,3 +27,5 @@ LuasKernel
    LuasKernel.K
    LuasKernel.visualise_covariance_in_data
    LuasKernel.visualise_covariance_matrix
+   LuasKernel.K_inv_by_vec
+   LuasKernel.K_by_vec
