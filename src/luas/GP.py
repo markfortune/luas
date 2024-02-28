@@ -354,9 +354,11 @@ class GP(object):
         Y:JAXArray,
         sigma: Scalar,
         plot: Optional[bool] = True,
+        use_gp_mean: Optional[bool] = True,
     ) -> JAXArray:
         """Performs GP regression and replaces any outliers above a given number of standard deviations
-        with the GP predictive mean evaluated at those locations.
+        with the GP predictive mean evaluated at those locations. If ``use_gp_mean = False`` then will instead
+        replace outliers with the mean function evaluated at each location.
         
         Args:
             p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
@@ -364,10 +366,11 @@ class GP(object):
             Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
             sigma (Scalar): Significance value in standard deviations above which outliers will be clipped.
             plot (bool, optional): Whether to produce plots which visualise the outliers in the data.
+            use_gp_mean (bool, optional): Will replace outliers with values from the GP predictive mean if ``True``,
+                otherwise will replace with values from the mean function.
         
         Returns:
-            JAXArray: The observed data with outliers replaced with interpolated values
-            from the GP predictive mean.
+            JAXArray: The observed data with outliers cleaned.
             
         """
         
@@ -383,7 +386,11 @@ class GP(object):
         
         # Create a copy of the observed data with outliers replaced with the GP predictive mean values
         Y_clean = jnp.array(Y.copy())
-        Y_clean = Y_clean.at[outliers].set(gp_mean[outliers])
+        
+        if use_gp_mean:
+            Y_clean = Y_clean.at[outliers].set(gp_mean[outliers])
+        else:
+            Y_clean = Y_clean.at[outliers].set(M[outliers])
         
         print("Number of outliers clipped = ", (outliers).sum())
         
