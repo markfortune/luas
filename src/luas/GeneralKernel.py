@@ -180,7 +180,7 @@ class GeneralKernel(Kernel):
         alpha = JLA.solve_triangular(stored_values["L_cho"], r, trans = 1)
 
         # Calculates the log likelihood
-        logL = - 0.5 * stored_values["logdetK"] - (r.size/2.) * jnp.log(2*jnp.pi) - 0.5 *  jnp.sum(jnp.square(alpha)) 
+        logL =  - 0.5 *  jnp.sum(jnp.square(alpha)) - 0.5 * stored_values["logdetK"] - (r.size/2.) * jnp.log(2*jnp.pi)
 
         return logL, stored_values
     

@@ -10,7 +10,7 @@ Due to the required numerical precision for matrix decomposition, double-precisi
 
 `luas` also does not have its own inference library but has custom distributions for `NumPyro` and `PyMC` so for most purposes if you want to perform inference it is likely you will need to install one of these. See the installation guides for [`NumPyro`](https://num.pyro.ai/en/latest/getting_started.html#installation) and [`PyMC`](https://www.pymc.io/projects/docs/en/latest/installation.html). The latest versions are ideal but `luas` is compatible with `PyMC` v4 as well as the current `PyMC` v5.
 
-If performing exoplanet transit modelling with the `luas.exoplanet` submodule then you will need the additional dependency `jaxoplanet` which should be installable using pip (see [`jaxoplanet`](https://github.com/exoplanet-dev/jaxoplanet) for the latest information).
+If performing exoplanet transit modelling with the `luas.exoplanet` submodule then you will need the additional dependency `jaxoplanet` which should be installable using pip (see [`jaxoplanet`](https://github.com/exoplanet-dev/jaxoplanet) for the latest information). Currently `luas` only supports `jaxoplanet` v0.0.1 although we hope to update to the more recent version soon.
 
 Installation of `luas` can be performed by cloning the GitHub repository and using pip.
 

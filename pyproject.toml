@@ -24,7 +24,7 @@ docs = [
     "jaxlib",
     "sphinx-book-theme",
     "myst-nb",
-    "jaxoplanet",
+    "jaxoplanet==0.0.1",
     "numpyro",
     "pymc",
 ]

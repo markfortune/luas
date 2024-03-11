@@ -1,9 +1,13 @@
 import jax
 import jax.numpy as jnp
+import jaxoplanet
 from jaxoplanet.orbits import KeplerianOrbit
 from jaxoplanet.light_curves import QuadLightCurve
 from typing import Tuple
 from ..luas_types import PyTree, JAXArray
+
+if jaxoplanet.__version__ != "0.0.1":
+    raise Warning(f"WARNING: Currently the luas.exoplanet.transit_light_curve and luas.exoplanet.transit_2D functions are only compatible with jaxoplanet v0.0.1, your version is: {jaxoplanet.__version__}")
 
 jax.config.update("jax_enable_x64", True)
 
