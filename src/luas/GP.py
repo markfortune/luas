@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from copy import deepcopy
 from functools import partial
+import jax
 from jax import jit
-import jax.config
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from .jax_convenience_fns import (
