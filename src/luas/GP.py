@@ -115,7 +115,6 @@ class GP(object):
             self.logL_stored = jax.jit(self.logL_stored)
             self.logP = jax.jit(self.logP)
             self.logP_stored = jax.jit(self.logP_stored)
-            self.predict = jax.jit(self.predict, static_argnames = ("return_std_dev","wn"))
             self.logL_hessianable = jax.jit(self.logL_hessianable)
             self.logL_hessianable_stored = jax.jit(self.logL_hessianable_stored)
             self.logP_hessianable = jax.jit(self.logP_hessianable)
