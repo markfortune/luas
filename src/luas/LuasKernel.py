@@ -658,6 +658,7 @@ class LuasKernel(Kernel):
         x_l: JAXArray,
         x_t: JAXArray,
         size: Optional[int] = 1,
+        wn: Optional[bool] = True,
     ) -> JAXArray:
         r"""Generate noise with the covariance matrix returned by this kernel using the input
         hyperparameters ``hp``.
@@ -677,6 +678,8 @@ class LuasKernel(Kernel):
                 observed locations. May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different
                 time/horizontal regression variables.
             size (int, optional): The number of different draws of noise to generate. Defaults to 1.
+            wn (bool, optional): Whether to include white noise when generating noise. Must have
+                a `wn` keyword argument in all kernel functions ``Kl``, ``Kt``, ``Sl``, ``St``.
                 
         Returns:
             JAXArray: If ``size = 1`` will generate noise of shape ``(N_l, N_t)``, otherwise if ``size > 1`` then
@@ -688,7 +691,7 @@ class LuasKernel(Kernel):
         N_t = x_t.shape[-1]
         
         # Solve for the matrix sqrt and matrix inv sqrt for Sl and St
-        Sl = self.Sl(hp, x_l, x_l)
+        Sl = self.Sl(hp, x_l, x_l, wn = wn)
         lam_Sl, Q_Sl = self.Sl.decomp(Sl)
         Sl_sqrt = Q_Sl @ jnp.diag(jnp.sqrt(lam_Sl))
         Sl_inv_sqrt = Q_Sl @ jnp.diag(jnp.sqrt(jnp.reciprocal(lam_Sl)))

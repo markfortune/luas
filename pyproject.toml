@@ -15,11 +15,13 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
 ]
-dependencies = ["numpy", "matplotlib", "tqdm"]
 
 [project.optional-dependencies]
 test = ["pytest"]
 docs = [
+    "numpy",
+    "matplotlib",
+    "tqdm",
     "jax", 
     "jaxlib",
     "sphinx-book-theme",
