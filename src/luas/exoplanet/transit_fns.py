@@ -76,6 +76,7 @@ def ld_from_kipping(q1: JAXArray, q2: JAXArray) -> Tuple[JAXArray, JAXArray]:
     return u1, u2
 
 
+# Calculates solar density in kg/m^3 to convert between fitting for stellar density or a/R*
 solar_density = ((M_sun/R_sun**3)/(u.kg/u.m**3)).si
 def transit_light_curve(par, t):
     """Uses the package `jaxoplanet <https://github.com/exoplanet-dev/jaxoplanet>`_ to calculate
@@ -88,22 +89,27 @@ def transit_light_curve(par, t):
     This particular function will only compute a single transit light curve but JAX's vmap function
     can be used to calculate the transit light curve of multiple wavelength bands at once.
     
+    It assumes that the central transit time `T0`, period `P`, semi-major axis to stellar ratio a/R* = `a`
+    and impact parameter `b` are size-1 arrays as this makes it easier to implement with vmap
+    and PyMC. Feel free to vary this however, for example it can easily be modified to fit for T0 separately
+    for each light curve.
+    
     .. code-block:: python
 
         >>> from luas.exoplanet import transit_light_curve
         >>> import jax.numpy as jnp
         >>> par = {
-        >>> ... "T0":0.,     # Central transit time (days)
-        >>> ... "P":3.4,     # Period (days)
-        >>> ... "a":8.2,     # Semi-major axis to stellar ratio (aka a/R*)
-        >>> ... "rho":0.1,   # Radius ratio (aka Rp/R* or rho)
-        >>> ... "b":0.5,     # Impact parameter
+        >>> ... "T0":0.*jnp.ones(1),     # Central transit time (days)
+        >>> ... "P":3.4*jnp.ones(1),     # Period (days)
+        >>> ... "a":8.2*jnp.ones(1),     # Semi-major axis to stellar ratio (aka a/R*)
+        >>> ... "rho":0.1,               # Radius ratio (aka Rp/R* or rho)
+        >>> ... "b":0.5*jnp.ones(1),     # Impact parameter
         >>> ... # Uses standard quadratic limb darkening parameterisation:
         >>> ... # I(r) = 1 − u1(1 − mu) − u2(1 − mu)^2
-        >>> ... "u1":0.5,    # First quadratic limb darkening coefficient
-        >>> ... "u2":0.1,    # Second quadratic limb darkening coefficient
-        >>> ... "Foot":1.,   # Baseline flux out of transit
-        >>> ... "Tgrad":0.   # Gradient in baseline flux (hrs^-1)
+        >>> ... "u1":0.5,                # First quadratic limb darkening coefficient
+        >>> ... "u2":0.1,                # Second quadratic limb darkening coefficient
+        >>> ... "Foot":1.,               # Baseline flux out of transit
+        >>> ... "Tgrad":0.               # Gradient in baseline flux (hrs^-1)
         >>> }
         >>> t = jnp.linspace(-0.1, 0.1, 100)
         >>> flux = transit_light_curve(par, t)
@@ -116,26 +122,44 @@ def transit_light_curve(par, t):
         JAXArray: Array of flux values for each time input.
         
     """
-    
-    rho_s = 3*jnp.pi*par["a"]**3/(G.value*(par["P"]*86400)**2)
+
+    # Calculates stellar density in kg/m^3 using par["a"] = a/R*
+    # Can modify this function to explicitly fit for the stellar density if desired
+    rho_s = 3*jnp.pi*par["a"][0]**3/(G.value*(par["P"][0]*86400)**2)
+
+    # Creates an object describing the star
+    # This code actually sets the stellar radius as 1 solar radius
+    # It gives the density relative to solar density
+    # This actually gives a different mass for the central star but this does not affect the transit model
+    # It effectively just creates an analogous system scaled in distance by a factor R_sun/R*
+    # This avoids having to input a value for R* which is irrelevant for transit calculations
+    # This does not affect a/R*, Rp/R* or b as they are all dimensionless quantities
     central = jaxoplanet.orbits.keplerian.Central(density=rho_s/solar_density,radius=1.)
 
+    # Define the planetary body
     body = jaxoplanet.orbits.keplerian.Body(
-        period=par["P"],
-        time_transit=par["T0"],
+        period=par["P"][0],
+        time_transit=par["T0"][0],
         radius=par["rho"],
-        impact_param=par["b"],  # All angles are in radians
-        eccentricity=0.,
+        impact_param=par["b"][0],
+        eccentricity=0., # Can optionally include eccenticity here
         omega_peri = 0.,
     )
 
+    # Creates an orbit object with both the central `star` object and the `body` planet object
     orbit = jaxoplanet.orbits.keplerian.OrbitalBody(central = central, body = body)
 
+    # Define light curve function `lc` using the quadratic limb darkening coefficients u1 and u2
     lc = jaxoplanet.light_curves.limb_dark.light_curve(orbit, [par["u1"], par["u2"]])
-    flux = lc(t)
-    baseline = par["Foot"] + 24*par["Tgrad"]*(t - par["T0"])
+
+    # Calculates the transit light curve flux dip with a baseline of one (default from jaxoplanet is zero)
+    flux = 1 + lc(t)
+
+    # Scales the transit model with a linear baseline
+    baseline = par["Foot"] + 24*par["Tgrad"]*(t - par["T0"][0])
     
-    return baseline*(1 + flux)
+    return baseline*flux
+
 
 
 """vmap of transit_light_curve function which assumes separate values of rho, c1, c2, Foot, Tgrad for each wavelength
@@ -178,16 +202,16 @@ def transit_2D(p: PyTree, x_l: JAXArray, x_t: JAXArray) -> JAXArray:
         >>> import jax.numpy as jnp
         >>> N_l = 16 # Number of wavelength channels
         >>> par = {
-        >>> ... "T0":0.,                    # Central transit time (days)
-        >>> ... "P":3.4,                    # Period (days)
-        >>> ... "a":8.2,                    # Semi-major axis to stellar ratio (aka a/R*)
-        >>> ... "d":0.01*np.ones(N_l),      # Transit depth (aka (Rp/R*)^2 or rho^2)
-        >>> ... "b":0.5,                    # Impact parameter
+        >>> ... "T0":0.*jnp.ones(1),        # Central transit time (days)
+        >>> ... "P":3.4*jnp.ones(1),        # Period (days)
+        >>> ... "a":8.2*jnp.ones(1),        # Semi-major axis to stellar ratio (aka a/R*)
+        >>> ... "d":0.01*jnp.ones(N_l),     # Transit depth (aka (Rp/R*)^2 or rho^2)
+        >>> ... "b":0.5*jnp.ones(1),        # Impact parameter
         >>> ... # Kipping (2013) limb darkening parameterisation is used
-        >>> ... "q1":0.36*np.ones(N_l),     # First quadratic limb darkening coefficient for each wv
-        >>> ... "q2":0.416*np.ones(N_l),    # Second quadratic limb darkening coefficient for each wv
-        >>> ... "Foot":1.*np.ones(N_l),     # Baseline flux out of transit for each wv
-        >>> ... "Tgrad":0.*np.ones(N_l),    # Gradient in baseline flux for each wv (hrs^-1)
+        >>> ... "q1":0.36*jnp.ones(N_l),    # First quadratic limb darkening coefficient for each wv
+        >>> ... "q2":0.416*jnp.ones(N_l),   # Second quadratic limb darkening coefficient for each wv
+        >>> ... "Foot":1.*jnp.ones(N_l),    # Baseline flux out of transit for each wv
+        >>> ... "Tgrad":0.*jnp.ones(N_l),   # Gradient in baseline flux for each wv (hrs^-1)
         >>> }
         >>> x_l = jnp.linspace(4000, 7000, N_l)
         >>> x_t = jnp.linspace(-0.1, 0.1, 100)

@@ -480,9 +480,9 @@ class GP(object):
         ax[3].pcolormesh(x_t_plot, x_l_plot, Y - gp_mean, shading = "nearest")
 
         # Label axes
-        ax[0].set_ylabel('x_l')
+        ax[0].set_ylabel(r'$x_l$')
         for i in range(4):
-            ax[i].set_xlabel('x_t')
+            ax[i].set_xlabel(r'$x_t$')
 
         # pcolormesh defaults to having the y-axis decrease with height which is weird so invert it
         plt.gca().invert_yaxis()
