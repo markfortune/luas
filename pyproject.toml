@@ -27,7 +27,7 @@ docs = [
     "astropy",
     "sphinx-book-theme",
     "myst-nb",
-    "jaxoplanet==0.0.1",
+    "jaxoplanet==0.0.2",
     "numpyro",
     "pymc",
 ]
