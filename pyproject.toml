@@ -24,6 +24,7 @@ docs = [
     "tqdm",
     "jax", 
     "jaxlib",
+    "astropy",
     "sphinx-book-theme",
     "myst-nb",
     "jaxoplanet==0.0.1",
