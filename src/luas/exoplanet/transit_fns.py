@@ -1,14 +1,10 @@
 import jax
 import jax.numpy as jnp
 import jaxoplanet
-from jaxoplanet.orbits import KeplerianOrbit
-from jaxoplanet.light_curves import QuadLightCurve
 from typing import Tuple
 from ..luas_types import PyTree, JAXArray
-
-if jaxoplanet.__version__ != "0.0.1":
-    raise Warning(f"WARNING: Currently the luas.exoplanet.transit_light_curve and luas.exoplanet.transit_2D functions are only compatible with jaxoplanet v0.0.1, your version is: {jaxoplanet.__version__}")
-
+from astropy.constants import M_sun, R_sun, G
+import astropy.units as u
 jax.config.update("jax_enable_x64", True)
 
 __all__ = [
@@ -80,7 +76,8 @@ def ld_from_kipping(q1: JAXArray, q2: JAXArray) -> Tuple[JAXArray, JAXArray]:
     return u1, u2
 
 
-def transit_light_curve(par: PyTree, t: JAXArray) -> JAXArray:
+solar_density = ((M_sun/R_sun**3)/(u.kg/u.m**3)).si
+def transit_light_curve(par, t):
     """Uses the package `jaxoplanet <https://github.com/exoplanet-dev/jaxoplanet>`_ to calculate
     transit light curves using JAX assuming quadratic limb darkening and a simple circular orbit.
     
@@ -120,19 +117,25 @@ def transit_light_curve(par: PyTree, t: JAXArray) -> JAXArray:
         
     """
     
-    light_curve = QuadLightCurve.init(u1=par["u1"], u2=par["u2"])
-    orbit = KeplerianOrbit.init(
-        time_transit=par["T0"],
-        period=par["P"],
-        semimajor=par["a"],
-        impact_param=par["b"],
-        radius=par["rho"],
-    )
-    
-    flux = (par["Foot"] + 24*par["Tgrad"]*(t-par["T0"]))*(1+light_curve.light_curve(orbit, t)[0])
-    
-    return flux
+    rho_s = 3*jnp.pi*par["a"]**3/(G.value*(par["P"]*86400)**2)
+    central = jaxoplanet.orbits.keplerian.Central(density=rho_s/solar_density,radius=1.)
 
+    body = jaxoplanet.orbits.keplerian.Body(
+        period=par["P"],
+        time_transit=par["T0"],
+        radius=par["rho"],
+        impact_param=par["b"],  # All angles are in radians
+        eccentricity=0.,
+        omega_peri = 0.,
+    )
+
+    orbit = jaxoplanet.orbits.keplerian.OrbitalBody(central = central, body = body)
+
+    lc = jaxoplanet.light_curves.limb_dark.light_curve(orbit, [par["u1"], par["u2"]])
+    flux = lc(t)
+    baseline = par["Foot"] + 24*par["Tgrad"]*(t - par["T0"])
+    
+    return baseline*(1 + flux)
 
 
 """vmap of transit_light_curve function which assumes separate values of rho, c1, c2, Foot, Tgrad for each wavelength

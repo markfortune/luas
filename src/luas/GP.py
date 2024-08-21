@@ -575,13 +575,15 @@ class GP(object):
             if max_sep_t is None:
                 max_sep_t = self.N_t//2
         
-            # Perform GP regression
-            gp_mean, sigma_diag, M = self.predict(p, Y)
         
             if include_gp_mean:
+                # Perform GP regression
+                gp_mean, sigma_diag, M = self.predict(p, Y)
+            
                 # Includes GP mean fit to data when subtracting from observed data
                 res = Y - gp_mean
             else:
+                M = self.mf(p, self.x_l, self.x_t)
                 # Only calculates the observed data minus the deterministic mean function
                 res = Y - M
             
@@ -649,8 +651,8 @@ class GP(object):
                 fig = plt.imshow(auto_corr[l_plot_range[0]:l_plot_range[1], t_plot_range[0]:t_plot_range[1]],
                            aspect = 'auto', interpolation = "none", extent = extent)
             
-            plt.xlabel("$\Delta$t")
-            plt.ylabel("$\Delta$l")
+            plt.xlabel(r"$\Delta$t")
+            plt.ylabel(r"$\Delta$l")
             plt.colorbar()
             
             return auto_corr, fig

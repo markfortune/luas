@@ -873,8 +873,8 @@ class LuasKernel(Kernel):
         # Generate plot as a pcolormesh
         fig = plt.pcolormesh(x_t_plot, x_l_plot, cov, **kwargs)
         plt.gca().invert_yaxis()
-        plt.xlabel("$x_t$")
-        plt.ylabel("$x_l$")
+        plt.xlabel(r"$x_t$")
+        plt.ylabel(r"$x_l$")
         plt.colorbar()
         
         return fig
@@ -971,30 +971,30 @@ class LuasKernel(Kernel):
                 St = get_corr_mat(St)
             
             # Separately plot each of the 4 component matrices
-            ax[0][0].set_title("K$_l$")
-            ax[0][0].set_ylabel("$x_l$")
-            ax[0][0].set_xlabel("$x_l$")
+            ax[0][0].set_title(r"K$_l$")
+            ax[0][0].set_ylabel(r"$x_l$")
+            ax[0][0].set_xlabel(r"$x_l$")
             img1 = ax[0][0].pcolormesh(x_l_plot, x_l_plot, Kl)
             ax[0][0].invert_yaxis()
             plt.colorbar(mappable = img1, ax = ax[0][0])
 
-            ax[0][1].set_ylabel("$x_t$")
-            ax[0][1].set_xlabel("$x_t$")
-            ax[0][1].set_title("K$_t$")
+            ax[0][1].set_ylabel(r"$x_t$")
+            ax[0][1].set_xlabel(r"$x_t$")
+            ax[0][1].set_title(r"K$_t$")
             img2 = ax[0][1].pcolormesh(x_t_plot, x_t_plot, Kt)
             ax[0][1].invert_yaxis()
             plt.colorbar(mappable = img2, ax = ax[0][1])
 
-            ax[1][0].set_ylabel("$x_l$")
-            ax[1][0].set_xlabel("$x_l$")
-            ax[1][0].set_title("$\Sigma_l$")
+            ax[1][0].set_ylabel(r"$x_l$")
+            ax[1][0].set_xlabel(r"$x_l$")
+            ax[1][0].set_title(r"$\Sigma_l$")
             img3 = ax[1][0].pcolormesh(x_l_plot, x_l_plot, Sl)
             ax[1][0].invert_yaxis()
             plt.colorbar(mappable = img3, ax = ax[1][0])
 
-            ax[1][1].set_ylabel("$x_t$")
-            ax[1][1].set_xlabel("$x_t$")
-            ax[1][1].set_title("$\Sigma_t$")
+            ax[1][1].set_ylabel(r"$x_t$")
+            ax[1][1].set_xlabel(r"$x_t$")
+            ax[1][1].set_title(r"$\Sigma_t$")
             img4 = ax[1][1].pcolormesh(x_t_plot, x_t_plot, St)
             ax[1][1].invert_yaxis()
             plt.colorbar(mappable = img4, ax = ax[1][1])
