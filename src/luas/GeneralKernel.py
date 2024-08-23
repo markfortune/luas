@@ -46,7 +46,7 @@ def general_cholesky(K: JAXArray) -> Tuple[JAXArray, JAXArray]:
 
 
 class GeneralKernel(Kernel):
-    """Kernel object which solves for the log likelihood for any general kernel function ``K``.
+    r"""Kernel object which solves for the log likelihood for any general kernel function ``K``.
     Can also generate noise from ``K`` and can be used to compute the GP predictive mean and 
     predictive covariance matrix conditioned on observed data.
     
@@ -108,7 +108,7 @@ class GeneralKernel(Kernel):
         x_t: JAXArray, 
         stored_values: Optional[PyTree] = {},
     ) -> PyTree:
-        """Builds the full covariance matrix K and uses the decomposition function specified at
+        r"""Builds the full covariance matrix K and uses the decomposition function specified at
         initialisation to return the Cholesky factor and the log determinant of K.
         
         Args:
@@ -145,7 +145,7 @@ class GeneralKernel(Kernel):
         R: JAXArray,
         stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
-        """Computes the log likelihood using Cholesky factorisation and also returns stored values
+        r"""Computes the log likelihood using Cholesky factorisation and also returns stored values
         from the matrix decomposition.
         
         Args:
@@ -193,7 +193,7 @@ class GeneralKernel(Kernel):
         size: Optional[int] = 1,
         stored_values: Optional[PyTree] = {},
     ) -> JAXArray:
-        """Generate noise with the covariance matrix returned by this kernel using the input
+        r"""Generate noise with the covariance matrix returned by this kernel using the input
         hyperparameters ``hp``.
         
         Args:
