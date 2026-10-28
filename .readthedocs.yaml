@@ -30,4 +30,7 @@ sphinx:
 # See https://docs.readthedocs.io/en/stable/guides/reproducible-builds.html
 python:
    install:
-   - requirements: requirements.txt
+   # Pinned versions known to work with luas v0.0.1 (see docs/requirements.txt)
+   - requirements: docs/requirements.txt
+   - method: pip
+     path: .
