@@ -134,7 +134,90 @@ class CovType():
         
     def __rmul__(self, other):
         return self.__mul__(other)
+
+
+
+class Conditional(CovType):
+    def __init__(self, kf, observed_ind, hp = {}, params = None):
+        self.kf = kf
+        self.hp = hp
+        self.params = params
+        self.opt_name = "General (1D)"
+        
+    def evaluate(self, x1, x2, **kwargs):
+        K = self.kf(self.hp, x1, x2, **kwargs)
+
+        return K
+
+    def decompose(self, x, full = True, idx = None, **kwargs):
+        # By default returns the lower triangular Cholesky factor
+        # i.e. K = L @ L.T
+        # Matches with tinygp default but not scipy or jax.scipy default
+        
+        K = self.evaluate(x, x, full = full, row_idx = idx, col_idx = idx, **kwargs)
+        
+        self.factor = JLA.cholesky(K, lower=True)
+        self.logdet = 2*jnp.log(jnp.diag(self.factor)).sum()
+        
+        return self, {"logdet":self.logdet, "factor":self.factor, "hp":self.hp}
+
+    def matrix_inv_sqrt(self, R, transpose=0, **kwargs):
+
+        R_prime = jax.scipy.linalg.solve_triangular(self.factor, R, trans=transpose, lower=True)
+
+        return R_prime
     
+    def matrix_sqrt(self, R, transpose=0, **kwargs):
+
+        if transpose:
+            return self.factor.transpose() @ R
+        else:
+            return self.factor @ R
+        
+    def scale(self, c):
+        return General(kf = lambda hp, x1, x2, **kwargs: c*self.evaluate(x1, x2, **kwargs))
+    
+    
+    def householder_transform(self, x, u):
+        w_i = self.matmul(x, x, u, full = True)
+        u_dot_w = jnp.dot(u, w_i)
+
+        def new_kf(hp, x1, x2, full = True, row_idx = None, col_idx = None, **kwargs):
+            K = self.kf(hp, x1, x2, full = full,
+                        row_idx = row_idx, col_idx = col_idx, **kwargs)
+
+            if row_idx is not None and col_idx is not None:
+                u_row, u_col = u[row_idx], u[col_idx]
+                w_i_row, w_i_col = w_i[row_idx], w_i[col_idx]
+            elif full == True:
+                u_row, u_col = u.copy(), u.copy()
+                w_i_row, w_i_col = w_i.copy(), w_i.copy()
+            else:
+                raise Exception("Must specify row and col indices or else set full = True to evaluate the full covariance matrix")
+            
+            K += 4 * u_dot_w * jnp.outer(u_row, u_col)
+            K -= 2 * (jnp.outer(u_row, w_i_col) + jnp.outer(w_i_row, u_col))
+            return K
+        
+        return General(new_kf)
+    
+    def __add__(self, other):
+        if isinstance(other, CovType):
+            return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) + other.evaluate(x1, x2, **kwargs))
+        elif isinstance(other, (jax.Array, np.ndarray)) or is_scalar(other):
+            return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) + other)
+        else:
+            raise Exception("Not implemented")
+
+    def __mul__(self, other) -> Kernel:
+        if isinstance(other, CovType):
+            return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) * other.evaluate(x1, x2, **kwargs))
+        elif is_scalar(other):
+            return self.scale(other)
+        elif isinstance(other, jax.Array) or isinstance(other, np.ndarray):
+            return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) * other)
+        else:
+            raise Exception("Not implemented")
 
 
 class General(CovType):

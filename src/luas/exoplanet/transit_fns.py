@@ -124,7 +124,7 @@ def transit_light_curve(par, t, **kwargs):
 
     # Calculates stellar density in kg/m^3 using par["a"] = a/R*
     # Can modify this function to explicitly fit for the stellar density if desired
-    rho_s = 3*jnp.pi*par["a"][0]**3/(G.value*(par["P"][0]*86400)**2)
+    rho_s = 3*jnp.pi*par["a"]**3/(G.value*(par["P"]*86400)**2)
 
     # Creates an object describing the star
     # This code actually sets the stellar radius as 1 solar radius
@@ -137,10 +137,10 @@ def transit_light_curve(par, t, **kwargs):
 
     # Define the planetary body
     body = jaxoplanet.orbits.keplerian.Body(
-        period=par["P"][0],
-        time_transit=par["T0"][0],
+        period=par["P"],
+        time_transit=par["T0"],
         radius=par["rho"],
-        impact_param=par["b"][0],
+        impact_param=par["b"],
         eccentricity=0., # Can optionally include eccenticity here
         omega_peri = 0.,
     )
@@ -155,7 +155,7 @@ def transit_light_curve(par, t, **kwargs):
     flux = 1 + lc(t)
 
     # Scales the transit model with a linear baseline
-    baseline = par["Foot"] + 24*par["Tgrad"]*(t - par["T0"][0])
+    baseline = par["Foot"] + 24*par["Tgrad"]*(t - par["T0"])
     
     return baseline*flux
 
@@ -249,16 +249,16 @@ def transit_light_curve_no_ld(par, t, **kwargs):
 
     # Calculates stellar density in kg/m^3 using par["a"] = a/R*
     # Can modify this function to explicitly fit for the stellar density if desired
-    rho_s = 3*jnp.pi*par["a"][0]**3/(G.value*(par["P"][0]*86400)**2)
+    rho_s = 3*jnp.pi*par["a"]**3/(G.value*(par["P"]*86400)**2)
 
     central = jaxoplanet.orbits.keplerian.Central(density=rho_s/solar_density,radius=1.)
 
     # Define the planetary body
     body = jaxoplanet.orbits.keplerian.Body(
-        period=par["P"][0],
-        time_transit=par["T0"][0],
-        radius=par["rho"][0],
-        impact_param=par["b"][0],
+        period=par["P"],
+        time_transit=par["T0"],
+        radius=par["rho"],
+        impact_param=par["b"],
         eccentricity=0., # Can optionally include eccenticity here
         omega_peri = 0.,
     )
@@ -270,6 +270,7 @@ def transit_light_curve_no_ld(par, t, **kwargs):
     lc = jaxoplanet.light_curves.limb_dark.light_curve(orbit, [0., 0.], **kwargs)
     
     return lc(t)
+
 
 def eclipse_light_curve(par, t, **kwargs):
     return transit_light_curve_no_ld(par, t, **kwargs)/par["rho"]**2
@@ -288,53 +289,3 @@ def eclipse_2D(mfp, X, **kwargs):
 
     return baseline * eclipse_lc
 
-
-def eclipse_light_curve_ecc(par, t, light_delay = False):
-    # Define the orbit
-    
-    # rho_s in units of kg/m^3
-    # rho_s = 3*jnp.pi*par["a"][0]**3/(G*(par["P"][0]*86400)**2)
-    # a_Rs = par["a"][0]
-
-    rho_s = par["rho_s"][0]
-    a_Rs = jnp.cbrt(rho_s*G.value*(par["P"][0]*86400)**2/(3*jnp.pi))
-    
-    central = jaxoplanet.orbits.keplerian.Central(density=rho_s/solar_density,
-                                                  radius=1.)
-
-    e = par["secosw"][0]**2 + par["sesinw"][0]**2
-    cosw = par["secosw"][0]/jnp.sqrt(e)
-    sinw = par["sesinw"][0]/jnp.sqrt(e)
-
-    opsw = 1 + sinw
-    E0 = 2 * jnp.arctan2(jnp.sqrt(1 - e) * cosw, jnp.sqrt(1 + e) * opsw)
-    M0 = E0 - e * jnp.sin(E0)
-    time_peri = par["T0"][0] - M0 * par["P"][0] / (2 * jnp.pi)
-    
-    incl_factor = (1 + e*sinw)/(1 - e**2)
-    body_eclipse = jaxoplanet.orbits.keplerian.Body(
-        period=par["P"][0],
-        time_peri=time_peri,
-        radius=par["rho"][0],
-        inclination = jnp.arccos(incl_factor*par["b"][0]/a_Rs),
-        eccentricity=e,
-        cos_omega_peri=-cosw,
-        sin_omega_peri=-sinw,
-    )
-
-    orbit = jaxoplanet.orbits.keplerian.OrbitalBody(central = central, body = body_eclipse)
-
-    lc = jaxoplanet.light_curves.limb_dark.light_curve(orbit, [0., 0.])
-
-    if light_delay:
-        x1, y1, z1 = orbit.relative_position(t)
-        x2, y2, z2 = orbit.relative_position(par["T0"][0])
-        delay = (z1 - z2)*par["rad_s"][0]*R_sun/c
-        flux = lc(t - delay.magnitude/(60*60*24))
-    else:   
-        flux = lc(t)
-        
-    flux *= par["d"][0]/par["rho"][0]**2
-    baseline = par["Foot"][0] + 24*par["Tgrad"][0]*(t - par["T0"][0])
-    
-    return baseline*(1 + flux)

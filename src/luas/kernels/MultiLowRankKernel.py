@@ -7,7 +7,7 @@ import tinygp
 
 from luas import WhiteNoiseKernel, SeparableKernel
 from luas.kernels.covtype import Outer, GeneralQuasisepPlusNoise, GeneralQuasisep, CovType, Identity, ScaledIdentity, Diagonal
-from luas.kernels.householder import HouseholderProduct, orthonormal_nullspace_gen
+from luas.kernels.householder import householder_qr, householder_qr_and_orthogonalise
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar
 from luas.kronecker_fns import tensor_mult
 from luas.kernels.tinygp_ext import ScaledKernel
@@ -190,9 +190,6 @@ class MultiLowRankKernel(CovType):
 
         self.orthogonalise = orthogonalise
 
-        if orthogonalise:
-            print("Will orthogonalise components, not this will ignore any non-orthogonal component of the whitened alpha vectors!")
-
         if not QR_transform and orthogonalise:
             raise Exception("Orthogonalisation requires a QR transformation! Either set QR_transform = True or orthogonalise = False")
 
@@ -200,6 +197,82 @@ class MultiLowRankKernel(CovType):
             raise NotImplementedError("Use of pre-calculated stored values not yet implemented.")
         else:
             self.decompose = self.decompose_no_stored_values
+
+
+    def _build_A(self, X):
+        """Forms the alpha vectors that are the low-rank vector components of the low-rank kernel terms
+        Also orthogonalises them if orthogonalise is set to True
+        """
+
+        stored_values = {}
+        non_cel_vec = X[1-self.fast_dim]
+        cel_vec = X[self.fast_dim]
+
+        # Generate transformations to handle whitening for measurement covariance/noise
+        self.Sigma_transf, stored_values_Sigma_transf = self.Sigma[1-self.fast_dim].decompose(non_cel_vec, full = True)
+
+        # Adds the log determinant of K_transf term in the transformed log-likelihood
+        stored_values["logdet"] = cel_vec.shape[-1]*stored_values_Sigma_transf["logdet"]
+
+
+        # Extract alpha components from each kernel term
+        stored_values["A"] = jnp.zeros((non_cel_vec.shape[-1], self.N_alpha))
+        for (i, K_i) in enumerate(self.K_list):
+            if isinstance(K_i[1-self.fast_dim], Outer):
+                # Add a alpha @ alpha^T \otimes K_i low-rank term
+
+                K_i_non_cel, _ = K_i[1-self.fast_dim].decompose(non_cel_vec)
+                stored_values["A"] = stored_values["A"].at[:, i].set(K_i_non_cel.alpha)
+            else:
+                raise Exception(f"Kernel terms in dimension {1-self.fast_dim} should only contain Amplitude terms\
+                                 when fast_dim = {self.fast_dim}")
+
+        if stored_values["A"].shape[1] > stored_values["A"].shape[0] and self.orthogonalise:
+            raise Exception(f"Too many components to orthogonalise! Rank of low-rank dimension = {stored_values['A'].shape[1]},"\
+                            f"which is greater than the length of the low-rank dimension {non_cel_vec.shape[-1]}")
+        
+        # Whiten alpha vectors 
+        stored_values["J"] = self.Sigma_transf.matrix_inv_sqrt(stored_values["A"], transpose = 0)
+
+        # Decide whether to perform Householder QR
+        # If the total rank is less than the length of that dimension, we can reduce the dimension by exploiting sparsity
+        reduce_dim1 = self.N_alpha < non_cel_vec.shape[-1] and self.QR_transform
+
+        # Even if the total rank is equal to the length of the dimension, orthogonalising the vectors still gives a speed boost
+        reduce_dim2 = self.N_alpha <= non_cel_vec.shape[-1] and self.orthogonalise
+
+        self.reduce_dim = reduce_dim1 or reduce_dim2
+
+        if self.reduce_dim:
+            if self.orthogonalise:
+                stored_values["J"], U, self.householder_transform, stored_values["A"] = householder_qr_and_orthogonalise(stored_values["J"])
+
+                # unwhiten orthogonalised A to get the version the alpha values without non-orthogonal components
+                stored_values["A"] = self.Sigma_transf.matrix_sqrt(stored_values["A"], transpose = 0)
+
+                for (i, K_i) in enumerate(self.K_list):
+                    K_i[1-self.fast_dim].alpha_init = stored_values["A"][:, i]
+            else:
+                # Performs Householder QR decomposition
+                stored_values["J"], U, self.householder_transform = householder_qr(stored_values["J"])
+            
+        return stored_values
+
+
+    def make_orthogonal(self, A, X):
+
+        # Generate transformations to handle whitening for measurement covariance/noise
+        self.Sigma_transf, stored_values_Sigma_transf = self.Sigma[1-self.fast_dim].decompose(X[1-self.fast_dim], full = True)
+
+        # Whiten alpha vectors 
+        A_white = self.Sigma_transf.matrix_inv_sqrt(A, transpose = 0)
+
+        _, _, _, A_white_ortho = householder_qr_and_orthogonalise(A_white)
+
+        # unwhiten orthogonalised A to get the version the alpha values without non-orthogonal components
+        A_ortho = self.Sigma_transf.matrix_sqrt(A_white_ortho, transpose = 0)
+
+        return A_ortho
 
 
     def decompose_no_stored_values(
@@ -213,97 +286,45 @@ class MultiLowRankKernel(CovType):
         # should to something about idx and full
         assert full == True
 
-        stored_values = {} if stored_values is None else stored_values
         
-        non_cel_vec = X[1-self.fast_dim]
-        cel_vec = X[self.fast_dim]
+        N_slow_dim = X[1-self.fast_dim].shape[-1]
+        N_fast_dim = X[self.fast_dim].shape[-1]
 
-        # Generate transformations to handle whitening for measurement covariance/noise
-        self.Sigma_transf, stored_values_Sigma_transf = self.Sigma[1-self.fast_dim].decompose(non_cel_vec, full = True)
-
-        # Adds the log determinant of K_transf term in the transformed log-likelihood
-        stored_values["logdet"] = cel_vec.shape[-1]*stored_values_Sigma_transf["logdet"]
-
+        stored_values = self._build_A(X)
         
-        stored_values["non_cel_rank"] = 0
-        for K_i in self.K_list:
-            stored_values["non_cel_rank"] += K_i[1-self.fast_dim].rank(non_cel_vec)
-        
-        stored_values["A"] = jnp.zeros((non_cel_vec.shape[-1], stored_values["non_cel_rank"]))
         cel_kernel_order = []
+        for K_i in self.K_list:
+            cel_kernel_order.append(K_i[self.fast_dim])
         
-        col_i = 0
-        for (i, K_i) in enumerate(self.K_list):
-            if isinstance(K_i[1-self.fast_dim], Outer):
-                K_i_non_cel, _ = K_i[1-self.fast_dim].decompose(non_cel_vec)
-                stored_values["A"] = stored_values["A"].at[:, col_i].set(K_i_non_cel.alpha)
-                cel_kernel_order.append(K_i[self.fast_dim])
-                col_i += 1
-            else:
-                lam, Q = K_i[1-self.fast_dim].eigendecomp(non_cel_vec)
-
-                rank_i = K_i[1-self.fast_dim].rank(non_cel_vec)
-                lam_nonzero = lam[-rank_i:]
-
-                if isinstance(Q, HouseholderProduct):
-                    alpha_eigen = Q.V[:, -rank_i:] @ jnp.diag(jnp.sqrt(lam_nonzero))
-                else:
-                    alpha_eigen = Q[:, -rank_i:] @ jnp.diag(jnp.sqrt(lam_nonzero))
-                
-                for j in range(rank_i):
-                    stored_values["A"] = stored_values["A"].at[:, col_i].set(alpha_eigen[:, j])
-                    
-                    # Could accept a list of kernels in K_i[self.fast_dim]
-                    cel_kernel_order.append(K_i[self.fast_dim])
-                    col_i += 1
-        if stored_values["A"].shape[1] > stored_values["A"].shape[0] and self.orthogonalise:
-            raise Exception(f"Too many components to orthogonalise! Rank of low-rank dimension = {stored_values['A'].shape[1]},"\
-                            f"which is greater than the length of the low-rank dimension {non_cel_vec.shape[-1]}")
-        
-        # Transform vectors 
-        stored_values["J"] = self.Sigma_transf.matrix_inv_sqrt(stored_values["A"], transpose = 0)
-
-        # If the total rank is less than the length of that dimension, we can reduce the dimension by exploiting sparsity
-        reduce_dim1 = stored_values["non_cel_rank"] < non_cel_vec.shape[-1] and self.QR_transform
-
-        # Even if the total rank is equal to the length of the dimension, orthogonalising the vectors still gives a speed boost
-        reduce_dim2 = stored_values["non_cel_rank"] <= non_cel_vec.shape[-1] and self.orthogonalise
-
-        self.reduce_dim = reduce_dim1 or reduce_dim2
-
-        if self.reduce_dim:
-            stored_values["J"], U, self.householder_transform = orthonormal_nullspace_gen(stored_values["J"])
-        
-        if not isinstance(self.Sigma[self.fast_dim], (Identity, ScaledIdentity, Diagonal)):
-            # If Sigma is a dense matrix append to A block as e_i e_i^t \otimes Sigma_t terms
+        if isinstance(self.Sigma[self.fast_dim], (Identity, ScaledIdentity, Diagonal)):
+            # If Sigma_t is diagonal then we just add an overall diagonal to the A block
+            cel_diag = (self.Sigma[self.fast_dim].diag + self.Sigma[self.fast_dim].wn_diag)*jnp.ones(N_fast_dim)
+        else:
+            # If Sigma_t is a dense matrix append to A block as additional e_i e_i^t \otimes Sigma_t terms
             add_basis = jnp.eye(stored_values["J"].shape[0])
             stored_values["J"] = jnp.concatenate([stored_values["J"], add_basis], axis = 1)
 
-            for j in range(stored_values["J"].shape[0]):
-                cel_kernel_order.append(self.Sigma[self.fast_dim])
+            cel_kernel_order += [self.Sigma[self.fast_dim]] * stored_values["J"].shape[0]
 
             if self.use_quasi:
-                cel_diag = (self.Sigma[self.fast_dim].diag + self.Sigma[self.fast_dim].wn_diag)*jnp.ones(cel_vec.shape[-1])
+                cel_diag = (self.Sigma[self.fast_dim].diag + self.Sigma[self.fast_dim].wn_diag)*jnp.ones(N_fast_dim)
             else:
-                cel_diag = jnp.zeros(cel_vec.shape[-1])
-        else:
-            # If Sigma_t is diagonal then we just add an overall diagonal to the A block
-            cel_diag = (self.Sigma[self.fast_dim].diag + self.Sigma[self.fast_dim].wn_diag)*jnp.ones(cel_vec.shape[-1])
+                cel_diag = jnp.zeros(N_fast_dim)
 
         
         if self.reduce_dim:
             # Create the full diagonal for the A block
-            total_cel_diag = jnp.kron(cel_diag, jnp.ones(stored_values["non_cel_rank"]))
+            total_cel_diag = jnp.kron(cel_diag, jnp.ones(self.N_alpha))
         else:
             # Create the full diagonal of the full kf_tilde
-            total_cel_diag = jnp.kron(cel_diag, jnp.ones(non_cel_vec.shape[-1]))
+            total_cel_diag = jnp.kron(cel_diag, jnp.ones(N_slow_dim))
 
         
         if self.orthogonalise:
             if self.fast_dim:
-                D_mat = total_cel_diag.reshape((stored_values["non_cel_rank"], -1), order = "C")
+                D_mat = total_cel_diag.reshape((self.N_alpha, -1), order = "C")
             else:
-                D_mat = total_cel_diag.reshape((stored_values["non_cel_rank"], -1), order = "F")
+                D_mat = total_cel_diag.reshape((self.N_alpha, -1), order = "F")
 
             # Different blocks kernel handles a block diagonal covariance matrix where kernel objects can have different types
             kf_mixingmat = DifferentBlocksKernel(D_mat, jnp.diag(stored_values["J"])**2, cel_kernel_order, block_dim = self.fast_dim)
@@ -326,7 +347,7 @@ class MultiLowRankKernel(CovType):
             # Must create the D block
             if isinstance(self.Sigma[self.fast_dim], (Identity, ScaledIdentity, Diagonal)):
                 # Case where D block is fully diagonal
-                null_space_rank = non_cel_vec.shape[-1] - stored_values["non_cel_rank"]
+                null_space_rank = N_slow_dim - self.N_alpha
                 if self.fast_dim == 0:
                     rest_cel_diag = jnp.outer(cel_diag, jnp.ones(null_space_rank))
                 else:
@@ -342,7 +363,7 @@ class MultiLowRankKernel(CovType):
 
             self.kf_tilde = Block2x2Kernel(kf_A = kf_mixingmat, kf_D_CAB = kf_D,
                                            dim_split = 1-self.fast_dim, A_full = True, D_full = True,
-                                           split_loc = stored_values["non_cel_rank"])
+                                           split_loc = self.N_alpha)
         else:
             # No need for 2x2 block matrix if we aren't reducing the dimension with Householder QR
             self.kf_tilde = kf_mixingmat
@@ -432,7 +453,15 @@ class MultiLowRankKernel(CovType):
         return R_prime
 
 
-    def matmul(self, X1, X2, R, **kwargs):
+    def matmul(self, X1, X2, R, full = True, **kwargs):
+
+        if full != True:
+            raise Exception("MultiLowRankKernel can only build full square matrices")
+
+        if self.orthogonalise:
+            # Must ensure vectors are properly orthogonalised
+            # This will update the kernel terms in self.K_list so that they are orthogonalised
+            stored_values = self._build_A(X1)
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
 

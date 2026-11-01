@@ -7,7 +7,7 @@ from luas.kernels.covtype import Outer, Exp, GeneralQuasisep, CovType, Identity,
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar, is_scalar
 from luas.kronecker_fns import tensor_mult, vmap_for_tensors, cyclic_transpose
 from luas.kernel_interface import read_K_list_2D
-from luas.kernels.householder import orthonormal_nullspace_gen
+from luas.kernels.householder import householder_qr
 from luas.kernels.BlockKernel import Block2x2Kernel
 from luas.kernels.GeneralKernel import GeneralKernel
 from luas.kernels.LuasPlusMultiLowRankKernel import LuasPlusMultiLowRankKernel
@@ -176,8 +176,8 @@ class ExtendedLuasKernel(CovType):
         beta_mat = self.Sigma_transf[1].matrix_inv_sqrt(beta_mat)
         
         # Get Householder transform of all Outer covariances
-        self.J_A, stored_values["U_A"], self.householder_transform_A = orthonormal_nullspace_gen(alpha_mat, reverse = True)
-        self.J_B, stored_values["U_B"], self.householder_transform_B = orthonormal_nullspace_gen(beta_mat, reverse = True)
+        self.J_A, stored_values["U_A"], self.householder_transform_A = householder_qr(alpha_mat, reverse = True)
+        self.J_B, stored_values["U_B"], self.householder_transform_B = householder_qr(beta_mat, reverse = True)
         
         ####### Transform kernels #######
 

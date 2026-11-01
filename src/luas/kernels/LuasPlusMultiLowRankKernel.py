@@ -6,7 +6,7 @@ from luas.kernels.covtype import Outer, Exp, GeneralQuasisep, CovType, Identity,
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar, is_scalar
 from luas.kronecker_fns import tensor_mult, vmap_for_tensors, cyclic_transpose
 from luas.kernel_interface import read_K_list_2D
-from luas.kernels.householder import orthonormal_nullspace_gen
+from luas.kernels.householder import householder_qr
 from luas.kernels.BlockKernel import Block2x2Kernel, BlockKernel
 from luas.kernels.GeneralKernel import GeneralKernel
 from luas.kernels.LuasKernelND import LuasKernelND
@@ -285,7 +285,7 @@ class LuasPlusMultiLowRankKernel(CovType):
 
             ######### Do transforms in fast_dim #########
             # Get Householder transform of all Outer covariances
-            stored_values["J_A"], stored_values["U_A"], self.householder_transform = orthonormal_nullspace_gen(alpha_mat,
+            stored_values["J_A"], stored_values["U_A"], self.householder_transform = householder_qr(alpha_mat,
                                                                                                             reverse = True)
             
             # Now must transform fast covariance matrices with Householder transform i.e. H K H.T, H Sigma H.T

@@ -221,6 +221,7 @@ class LuasKernel(CovType):
         self,
         Sigma,
         K,
+        *, # force keyword only after this
         use_stored_values: Optional[bool] = True,
         **kwargs,
     ):
@@ -333,7 +334,7 @@ class LuasKernel(CovType):
 
         # Computes the log determinant of K
         lam_S = jnp.outer(stored_values["lam_Sl"], stored_values["lam_St"])
-        stored_values["logdetK"] = jnp.log(jnp.multiply(D, lam_S)).sum()
+        stored_values["logdet"] = jnp.log(jnp.multiply(D, lam_S)).sum()
 
         self.stored_values = stored_values
         
@@ -466,7 +467,7 @@ class LuasKernel(CovType):
 
         # Computes the log determinant of K
         lam_S = jnp.outer(stored_values["lam_Sl"], stored_values["lam_St"])
-        stored_values["logdetK"] = jnp.log(jnp.multiply(D, lam_S)).sum()
+        stored_values["logdet"] = jnp.log(jnp.multiply(D, lam_S)).sum()
 
         # Store in order to perform checks for the next call of this function
         stored_values["Sl"] = Sl
@@ -522,8 +523,8 @@ class LuasKernel(CovType):
         # Use functions with custom derivatives to accurately calculate the log
         # likelihood and its gradient
         rKr = r_K_inv_r(R, stored_values)
-        logdetK = logdetK_calc(stored_values)
-        logL = - 0.5 * logdetK - 0.5 * R.size * jnp.log(2*jnp.pi) -0.5 * rKr 
+        logdet = logdetK_calc(stored_values)
+        logL = - 0.5 * logdet - 0.5 * R.size * jnp.log(2*jnp.pi) -0.5 * rKr 
 
         return  logL
 
@@ -569,8 +570,8 @@ class LuasKernel(CovType):
         # Use functions with custom derivatives to accurately calculate the log
         # likelihood, its gradient and hessian
         rKr = r_K_inv_r(R, stored_values)
-        logdetK = logdetK_calc_hessianable(stored_values)
-        logL =  -0.5 * rKr - 0.5 * logdetK  - 0.5 * R.size * jnp.log(2*jnp.pi)
+        logdet = logdet_calc_hessianable(stored_values)
+        logL =  -0.5 * rKr - 0.5 * logdet  - 0.5 * R.size * jnp.log(2*jnp.pi)
 
         return  logL
 

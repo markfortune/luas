@@ -13,7 +13,7 @@ from luas.kernels.tinygp_ext import LowRankProduct
 from luas.kernels.BlockKernel import Block2x2Kernel
 from luas.kernels.MixingMatQuasisep import MixingMatQuasisep
 from luas.kernels.MixingMatGeneral import MixingMatGeneral
-from luas.kernels.householder import orthonormal_nullspace_gen
+from luas.kernels.householder import householder_qr
 
 __all__ = [
     "DoubleMultiLowRankKernel",
@@ -241,8 +241,8 @@ class DoubleMultiLowRankKernel(CovType):
         if not reduce_dim:
             raise Exception(r"Requires fewer low-rank terms than the dimension size, i.e. N_\alpha < N_\lambda and N_\beta < N_t")
 
-        stored_values["J_A"], stored_values["U_A"], self.householder_transform_A = orthonormal_nullspace_gen(stored_values["A"])
-        stored_values["J_B"], stored_values["U_B"], self.householder_transform_B = orthonormal_nullspace_gen(stored_values["B"])
+        stored_values["J_A"], stored_values["U_A"], self.householder_transform_A = householder_qr(stored_values["A"])
+        stored_values["J_B"], stored_values["U_B"], self.householder_transform_B = householder_qr(stored_values["B"])
 
         kf_A = MixingMatTerm(stored_values["J_A"], A_kernel_order, diag = 1., fast_dim = 1)
         kf_B = MixingMatTerm(stored_values["J_B"], B_kernel_order, diag = 1., fast_dim = 0)

@@ -10,7 +10,8 @@ from jax.scipy.special import gammaln
 from typing import Any, Optional, Callable, Union, Dict, Tuple
 
 from luas.kernel_selector import kernel_selector
-from luas.kernels.covtype import CovType, General
+from luas.kernels.covtype import CovType
+from luas.kernels.ConditionalKernel import ConditionalKernel
 from luas.luas_types import Scalar, PyTree, JAXArray, Kernel
 from luas.kronecker_fns import calc_data_shape
 from luas.jax_convenience_fns import (
@@ -136,12 +137,17 @@ class GP(object):
         
         self.opt_name = self.kf_eval.opt_name
         if verbose:
-            print(f"Using GP optimisation {self.opt_name}")
+            print(f"Using: {self.opt_name}")
+
+            if "orthogonalise" in kernel_kwargs.keys() and kernel_kwargs["orthogonalise"] == True:
+                if self.kf_eval.opt_name == "MultiLowRankKernel":
+                    print("Will orthogonalise components, note this will ignore any non-orthogonal component of the whitened alpha vectors!")
+                else:
+                    raise Exception("Orthogonalise components only implemented for MultiLowRankKernel with N_alpha > 1")
 
         if jit:
             # Have to option to avoid JIT compiling which can sometimes be useful
-            # e.g. it can make debugging easier
-            # Using a mean function or logPrior which cannot be JIT compiled
+            # e.g. it can make debugging easier, or if using a mean function which cannot be JIT compiled
             # Note that NumPyro will perform JIT compilation anyway but PyMC will not
             self.logL = jax.jit(self.logL)
             self.logP = jax.jit(self.logP)
@@ -237,7 +243,7 @@ class GP(object):
 
 
 
-    def optimise(self, p_init, Y, param_bounds = {}, vars = None, fixed_vars = None, maxeval = 5000, include_transformed = False):
+    def optimise(self, p_init, Y, param_bounds = {}, vars = None, fixed_vars = None, maxeval = 5000, include_transformed = False, **kwargs):
         import pymc as pm
 
         pymc_model, var_dict, p_pymc = self.pymc_model(p_init, Y, param_bounds = param_bounds, vars = vars, fixed_vars = fixed_vars)
@@ -248,6 +254,7 @@ class GP(object):
             include_transformed = include_transformed, # If this is true it will also output the PyMC transformed values of bounded parameters
             start = p_pymc,              # Starting point of optimisations
             maxeval = maxeval,             # Maximum steps to run (normally will converge before this)
+            **kwargs,
         )
 
         # Create a new dictionary of optimised values which includes our fixed parameters
@@ -257,152 +264,6 @@ class GP(object):
         return p_opt
     
 
-    def transform_fn(
-        self,
-        p: PyTree,
-        Y: JAXArray,
-        inverse = True,
-        transpose = 0,
-    ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
-        Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
-        Returns:
-            Scalar: The value of the log likelihood.
-            
-        """
-        
-        # Calculate the residuals after subtraction of the deterministic mean function
-        R = Y - self.mf(p, self.x)
-        self.kf_eval = self.build_kf(p, self.x)
-        
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
-        
-        if inverse:
-            logL_val = self.kf_eval.inv_transform_fn(R, transpose = transpose)
-        else:
-            logL_val = self.kf_eval.transform_fn(R, transpose = transpose)
-        
-        return logL_val
-
-
-
-    def apply_inverse(
-        self,
-        p: PyTree,
-        R: JAXArray,
-        **kwargs,
-    ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
-        Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
-        Returns:
-            Scalar: The value of the log likelihood.
-            
-        """
-        
-        self.kf_eval = self.build_kf(p, self.x)
-        
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
-        K_inv_R = self.kf_eval.inverse(R, **kwargs)
-        
-        return K_inv_R
-
-    
-    def matmul(
-        self,
-        p: PyTree,
-        R: JAXArray,
-        full = True,
-        **kwargs,
-    ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
-        Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
-        Returns:
-            Scalar: The value of the log likelihood.
-            
-        """
-        
-        self.kf_eval = self.build_kf(p, self.x)
-
-        if len(self.x) == 1:
-            K_R = self.kf_eval.matmul(self.x[0], self.x[0], R, full = full, **kwargs)
-        else:
-            K_R = self.kf_eval.matmul(self.x, self.x, R, full = full, **kwargs)
-        
-        return K_R
-        
-
-    def apply_matrix_sqrt(
-        self,
-        p: PyTree,
-        R: JAXArray,
-        transpose = 0,
-    ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
-        Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
-        Returns:
-            Scalar: The value of the log likelihood.
-            
-        """
-        
-        self.kf_eval = self.build_kf(p, self.x)
-        
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
-        L_R = self.kf_eval.matrix_sqrt(R, transpose = transpose)
-        
-        return L_R
-
-
-    def apply_matrix_inv_sqrt(
-        self,
-        p: PyTree,
-        R: JAXArray,
-        transpose = 0,
-    ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
-        Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
-        Returns:
-            Scalar: The value of the log likelihood.
-            
-        """
-        
-        self.kf_eval = self.build_kf(p, self.x)
-        
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
-        L_inv_R = self.kf_eval.matrix_inv_sqrt(R, transpose = transpose)
-        
-        return L_inv_R
-    
-    
     def logL_stored(
         self,
         p: PyTree,
@@ -521,7 +382,7 @@ class GP(object):
     
     def crossval(self, p, X, Y,
                  train_l = None, train_t = None,
-                 stack_hp_dim1 = [], stack_hp_dim2 = [],
+                 stack_p_dim1 = [], stack_p_dim2 = [],
                  return_predicted_loc = False,
                  **kwargs):
 
@@ -542,7 +403,7 @@ class GP(object):
             x_l = x_l[..., train_l]
             Y = Y[train_l, :]
             
-            for par in stack_hp_dim1:
+            for par in stack_p_dim1:
                 p_pred[par] = p_obs[par][~train_l]
                 p_obs[par] = p_obs[par][train_l]
         else:
@@ -556,7 +417,7 @@ class GP(object):
             x_t = x_t[..., train_t]
             Y = Y[:, train_t]
             
-            for par in stack_hp_dim2:
+            for par in stack_p_dim2:
                 p_pred[par] = p_obs[par][~train_t]
                 p_obs[par] = p_obs[par][train_t]
         else:
@@ -567,7 +428,7 @@ class GP(object):
             p_obs, (x_l, x_t), Y,
             p_pred = p_pred,
             x_l_pred = x_l_pred, x_t_pred = x_t_pred,
-            stack_hp_dim1 = stack_hp_dim1, stack_hp_dim2 = stack_hp_dim2,
+            stack_p_dim1 = stack_p_dim1, stack_p_dim2 = stack_p_dim2,
             return_predicted_loc = return_predicted_loc,
             sample = False, return_K_pred_inv = True,
             **kwargs,
@@ -591,15 +452,16 @@ class GP(object):
     
     
     
-    def predict(self, p, X_obs, Y,
+    def predict(self, p, Y,
                 p_pred = None,
-                x_l_pred = None, x_t_pred = None,
+                X_obs = None,
+                X_pred = None,
                 interp_params_dim1 = [], interp_params_dim2 = [],
                 interp_row_l = None, interp_row_t = None,
-                stack_hp_dim1 = [], stack_hp_dim2 = [], 
+                stack_p_dim1 = [], stack_p_dim2 = [], 
                 sort_l = True, sort_t = True,
                 fast_dim = None, return_predicted_loc = True,
-                sample = False, return_K_pred_inv = False):
+                sample = False):
     
         r"""Performs GP regression and computes the GP predictive mean and the GP predictive
         uncertainty as the standard devation at each location or else can return the full
@@ -644,119 +506,134 @@ class GP(object):
         
         """
         p_obs = deepcopy(p)
+
+        if X_obs is None:
+            X_obs = deepcopy(self.x)
         
         if p_pred is None:
             p_pred = deepcopy(p_obs)
-    
-        # Calculate mean function at observed locations
-        M_obs = self.mf(p_obs, X_obs)
         
         pred_loc_equals_obs = False
-        if x_l_pred is None and x_t_pred is None:
+        if X_pred is None:
             # If no prediction locations given then taken to be same as observed locations
             pred_loc_equals_obs = True
             
-            if fast_dim is None:
-                x_l_pred = X_obs[0].copy()
-            elif fast_dim == 0:
-                x_l_pred = X_obs[0].copy()
+            if fast_dim is None or fast_dim == 0:
+                X_pred = [X_obs[0], None]
             elif fast_dim == 1:
-                x_t_pred = X_obs[1].copy()
+                X_pred = [None, X_obs[1]]
             else:
                 raise Exception("fast_dim keyword argument must be None, 0 or 1")
     
         # Stack observed and predicted locations together for each dimension
         # Works out location of predicted and observed locations within array
         # Will sort the total stacked regression variables if requested, necessary for celerite dimensions
-        x_l_total, x_l_pred, obs_points_l, pred_points_l, sort_fn_l = stack_obs_and_pred_points(X_obs[0], x_l_pred, sort = sort_l)
-        x_t_total, x_t_pred, obs_points_t, pred_points_t, sort_fn_t = stack_obs_and_pred_points(X_obs[1], x_t_pred, sort = sort_t)
+        x_l_total, X_pred[0], obs_points_l, pred_points_l, sort_fn_l = stack_obs_and_pred_points(X_obs[0], X_pred[0], sort = sort_l)
+        x_t_total, X_pred[1], obs_points_t, pred_points_t, sort_fn_t = stack_obs_and_pred_points(X_obs[1], X_pred[1], sort = sort_t)
 
-        x_total = (x_l_total, x_t_total)
-        x_pred = (x_l_pred, x_t_pred)
+        X_total = (x_l_total, x_t_total)
+        N_total = (X_total[0].shape[-1], X_total[1].shape[-1])
         
-        N_l_total = x_l_total.shape[-1]
-        N_t_total = x_t_total.shape[-1]
-        
-        observed_ind = jnp.ix_(jnp.arange(N_l_total)[obs_points_l],
-                               jnp.arange(N_t_total)[obs_points_t])
+        observed_ind = jnp.ix_(jnp.arange(N_total[0])[obs_points_l],
+                               jnp.arange(N_total[1])[obs_points_t])
     
         if return_predicted_loc:
-            predicted_ind = jnp.ix_(jnp.arange(N_l_total)[pred_points_l],
-                                    jnp.arange(N_t_total)[pred_points_t])
+            # Will only output locations at grid inputs of (X_pred)
+            predicted_ind = jnp.ix_(jnp.arange(N_total[0])[pred_points_l],
+                                    jnp.arange(N_total[1])[pred_points_t])
         else:
-            predicted_ind = jnp.ix_(jnp.arange(N_l_total), jnp.arange(N_t_total))
-            
+            # Returns the full output locations at X_total
+            predicted_ind = jnp.ix_(jnp.arange(N_total[0]), jnp.arange(N_total[1]))
         
-        p_pred = interp_params(p_obs, p_pred, X_obs[0], x_l_pred,
+        p_pred = interp_params(p_obs, p_pred, X_obs[0], X_pred[0],
                                interp_param = interp_params_dim1,
                                interp_row = interp_row_l)
-        p_pred = interp_params(p_obs, p_pred, X_obs[1], x_t_pred,
+        p_pred = interp_params(p_obs, p_pred, X_obs[1], X_pred[1],
                                interp_param = interp_params_dim2,
                                interp_row = interp_row_t)
     
-        p_total = stack_params(p_obs, p_pred,
-                               stack_names_dim1 = stack_hp_dim1, sort_fn_dim1 = sort_fn_l,
-                               stack_names_dim2 = stack_hp_dim2, sort_fn_dim2 = sort_fn_t)
-        
-        if pred_loc_equals_obs:
-            M_pred = M_obs.copy()
-        elif return_predicted_loc:
-            M_pred = self.mf(p_pred, x_pred)
-        else:
-            M_pred = self.mf(p_total, x_total)
-    
         
         # GP mean calculation
+        # Calculate mean function at observed locations
+        M_obs = self.mf(p_obs, X_obs)
         R = Y - M_obs
 
+        # Calculate K^-1 R
         self.kf_eval = self.build_kf(p_obs, X_obs)
         self.kf_eval, stored_values = self.kf_eval.decompose(X_obs)
         K_inv_R = self.kf_eval.inverse(R)
-        
-        K_inv_R_to_mult = jnp.zeros((N_l_total, N_t_total))
+        logdet_K_train = stored_values["logdet"]
+
+        # Calculate K_*^T K_inv_R by building the full ((K, K_*), (K_*^T, K_**))
+        K_inv_R_to_mult = jnp.zeros((N_total[0], N_total[1]))
         K_inv_R_to_mult = K_inv_R_to_mult.at[observed_ind].set(K_inv_R)
 
-        self.kf_eval_total = self.build_kf(p_total, x_total)
-        Ks_Kinv_R_term = self.kf_eval_total.matmul(x_total, x_total, K_inv_R_to_mult, wn = False, full = True)
-        
-        gp_mean_pred = M_pred + Ks_Kinv_R_term[predicted_ind]
+        # mf of conditional GP
+        def gp_mean_cond_fn(p_pred, X_total):
+            p_total = stack_params(p_obs, p_pred,
+                                    stack_names_dim1 = stack_p_dim1, sort_fn_dim1 = sort_fn_l,
+                                    stack_names_dim2 = stack_p_dim2, sort_fn_dim2 = sort_fn_t)
 
-        if sample:
-            K_pred_draw = self.sample_conditional(p_obs, X_obs, p_total, x_total, observed_ind)
-            K_pred_draw = gp_mean_pred + K_pred_draw[predicted_ind]
-    
-            if not return_predicted_loc:
-                K_pred_draw = K_pred_draw.at[observed_ind].set(0.)
+            self.kf_eval_total = self.build_kf(p_total, X_total)
+            Ks_Kinv_R_term = self.kf_eval_total.matmul(X_total, X_total, K_inv_R_to_mult, wn = False, full = True)
 
-        if return_K_pred_inv:
-            self.kf_eval_total, stored_values_total = self.kf_eval_total.decompose(x_total)
-            
-            def K_pred_inv_fn(R):
-                R_pred = R.at[observed_ind].set(0.)
-                K_pred_inv_R = self.kf_eval_total.inverse(R_pred)
-                return K_pred_inv_R
-        
-        if sample and return_K_pred_inv:
-            return gp_mean_pred, M_pred, K_pred_draw, K_pred_inv_fn
-        elif sample and not return_K_pred_inv:
-            return gp_mean_pred, M_pred, K_pred_draw
-        elif not sample and return_K_pred_inv:
-            return gp_mean_pred, M_pred, K_pred_inv_fn
-        else:
+            if pred_loc_equals_obs:
+                M_pred = M_obs.copy()
+            elif return_predicted_loc:
+                M_pred = self.mf(p_pred, X_total)[predicted_ind]
+            else:
+                M_pred = self.mf(p_total, X_total)
+
+            gp_mean_pred = M_pred + Ks_Kinv_R_term[predicted_ind]
             return gp_mean_pred, M_pred
+
+        def kf_cond(p_pred, X_total):
+            p_total = stack_params(p_obs, p_pred, stack_names_dim1 = stack_p_dim1, sort_fn_dim1 = sort_fn_l,
+                                    stack_names_dim2 = stack_p_dim2, sort_fn_dim2 = sort_fn_t)
+            
+            kf_eval_total = self.build_kf(p_total, X_total)
+            return ConditionalKernel(kf_eval_total, N_total = N_total, predicted_ind = predicted_ind, logdet_K_train = logdet_K_train)
+
+        mf_cond = lambda p_pred, X_total: gp_mean_cond_fn(p_pred, X_total)[0]
+        gp_cond = GP(p_pred, X_total, mf = mf_cond, kf = kf_cond)
+        gp_cond.data_shape = (X_pred[0].shape[-1], X_pred[1].shape[-1])
+
+        gp_mean_pred, M_pred = gp_mean_cond_fn(p_pred, X_total)
+        
+        return gp_mean_pred, M_pred, gp_cond
+        
+
+
+    def gp_mean_calc(
+            self,
+            p,
+            Y,
+            return_mf = False,
+    ):
+        # Perform GP regression at the observed data locations
+        M = self.mf(p, self.x)
+        
+        res = Y - M
+        K_inv_R = self.apply_inverse(p, res)
+        gp_mean = M + self.matmul(p, K_inv_R, wn = False, full = True)
+
+        if return_mf:
+            return gp_mean, M
+        else:
+            return gp_mean
 
     
     def sample_conditional(self,
                p_obs, x_obs,
-               p_total, x_total,
+               p_total, X_total,
                observed_ind,
                stored_values = {}, stored_values_total = {}):
         # Takes a draw from the predictive covariance matrix
     
         # First take a draw from K_pred^-1 (weird but it's just how this optimisation works...)
         self.kf_eval = self.build_kf(p_obs, x_obs)
-        self.kf_eval_total = self.build_kf(p_total, x_total)
-        K_pred_inv_draw, stored_values_K_full = self.kf_eval_total.K_inv_draw(p_total, x_total,
+        self.kf_eval_total = self.build_kf(p_total, X_total)
+        K_pred_inv_draw, stored_values_K_full = self.kf_eval_total.K_inv_draw(p_total, X_total,
                                                                          stored_values_total)
 
         
@@ -764,7 +641,7 @@ class GP(object):
         K_pred_inv_draw = K_pred_inv_draw.at[observed_ind].set(0.)
         
         # Mult by K_full, calculates [K_s @ K_pred_inv_sqrt @ z, K_ss @ K_pred_inv_sqrt @ z]
-        K_pred_draw = self.kf_eval_total.K_mult_vec(p_total, x_total, K_pred_inv_draw,
+        K_pred_draw = self.kf_eval_total.K_mult_vec(p_total, X_total, K_pred_inv_draw,
                                             stored_values_total)
         
         # Take values corresponding to K_s @ K_pred_inv_sqrt @ z
@@ -777,186 +654,13 @@ class GP(object):
         # Calc K_s.T @ K_inv @ K_s @ K_pred_inv_sqrt @ z
         final_K_mult = jnp.zeros_like(K_pred_draw)
         final_K_mult = final_K_mult.at[observed_ind].set(K_inv_K_s_K_inv_sqrt)
-        Ks_Kinv_Ks_term = self.kf_eval_total.K_mult_vec(p_total, x_total,
+        Ks_Kinv_Ks_term = self.kf_eval_total.K_mult_vec(p_total, X_total,
                                                 final_K_mult, stored_values_total)
         
         # Calc (K_ss - K_s.T @ K_inv @ K_s) @ K_pred_inv_sqrt @ z
         K_pred_draw -= Ks_Kinv_Ks_term
     
         return K_pred_draw
-    
-    
-    def autocorrelate(
-        self,
-        p: PyTree,
-        Y: JAXArray,
-        max_sep_l: Optional[int] = None,
-        max_sep_t: Optional[int] = None,
-        include_gp_mean: Optional[bool] = True,
-        mat: Optional[JAXArray] = None,
-        plot: Optional[bool] = True,
-        plot_kwargs: Optional[dict] = None,
-        zero_centre: Optional[bool] = False,
-        cov: Optional[bool] = False,
-    ) -> Union[JAXArray, Tuple[JAXArray, plt.Figure]]:
-        """Performs a quick (and approximate) 2D autocorrelation using ``jax.scipy.signal.correlate2d``
-        on the observed data after subtraction of the GP predictive mean to examine if there is any
-        remaining correlation in the residuals.
-        
-        Note:
-            This function also assumes the data is evenly spaced in both dimensions. It is also
-            not an exact autocorrelation as the mean is not subtracted for each set of residuals and therefore
-            it is assumed the residuals always have mean zero. Also instead of dividing by the standard deviations
-            of the specific residuals being multiplied together, all values are divided by the overall variance
-            of the residuals. This can result in some values having correlation lying outside the interval [-1, 1]
-            but runs very efficiently and should be reasonably accurate unless considering correlations between
-            widely separated parts of the data. For this reason, by default only half the separation of the data
-            is visualised in the plots.
-        
-        If ``include_gp_mean = False`` then shows the autocorrelation of the observed data minus
-        the mean function (without the GP predictive mean) which is useful for visualising
-        what kernel function to use when fitting with a GP.
-        
-        Can also just input a general matrix ``mat`` to run an autocorrelation on, in which case the inputs
-        ``p`` and ``Y`` are ignored.
-        
-        Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            max_sep_l (int, optional): The maximum separation of wavelengths/rows to visualise the correlation of.
-                This is given as an integer referring to the number of rows apart to show. Defaults to half the
-                number of rows in the observed data ``Y``.
-            max_sep_t (int, optional): The maximum separation of time/columns to visualise the correlation of. This
-                is given as an integer referring to the number of columns apart to show. Defaults to half the
-                number of columns in the observed data ``Y``.
-            include_gp_mean (bool, optional): Whether to subtract the GP predictive mean from the observed data
-                when calculating the residuals. If ``False`` will still subtract the deterministic mean function.
-                Useful for visualising correlation in a data set to aid in kernel choice before fitting with a GP.
-            mat (JAXArray, optional): Instead of using the residuals of the observed data, providing a
-                matrix for this argument will calculate the autocorrelation of this given matrix instead.
-            plot (bool, optional): If ``True`` then will produce a plot visualising the autocorrelation.
-                Defaults to ``True``.
-            zero_centre (bool, optional): Whether to set the correlation at zero separation to 0.
-                Since the correlation at zero separation is always 1 it can make it hard to visualise
-                correlation values which are very small so setting this to ``True`` can aid visualisation.
-                Defaults to ``False``.
-            cov (bool, optional): If ``True`` will return the autocovariance matrix instead.
-            
-        Returns:
-            JAXArray or (JAXArray, plt.Figure): Returns the autocorrelation matrix of the residuals. If
-            ``plot = True`` then will return a tuple with the generated ``plt.Figure`` also added.
-        
-        """
-        
-        # Sets the maximum separation to visualise the autocorrelation for
-        # Once separations are too large the autocorrelation becomes very noisy
-        # as it is based off of very few values
-        if mat is not None:
-            # If a general matrix mat is given, defaults to autocorrelation of half its length
-            # in each dimension
-            if max_sep_l is None:
-                max_sep_l = mat.shape[0]//2
-            if max_sep_t is None:
-                max_sep_t = mat.shape[1]//2
-                
-            # Set residuals matrix equal to mat
-            res = mat
-            
-        else:
-            # For a matrix of residuals will also default to half the length of the data in
-            # each dimension
-            if max_sep_l is None:
-                max_sep_l = self.N_l//2
-            if max_sep_t is None:
-                max_sep_t = self.N_t//2
-        
-        
-            if include_gp_mean:
-                # Perform GP regression
-                gp_mean, sigma_diag, M = self.predict(p, Y)
-            
-                # Includes GP mean fit to data when subtracting from observed data
-                res = Y - gp_mean
-            else:
-                M = self.mf(p, self.x)
-                # Only calculates the observed data minus the deterministic mean function
-                res = Y - M
-            
-        # Performs the autocorrelation of the res matrix
-        auto_corr = jax.scipy.signal.correlate2d(res, res)
-        
-        # jax.scipy.signal.correlate2d will pad with zeros as necessary for the autocorrelation
-        # which will artificially reduce the strength of correlation at large separations.
-        # These lines autocorrelate a matrix of ones to divide auto_corr by so that a values
-        # with more zeros used for padding will be divided through by lower numbers
-        # This should normalise things correctly and ensures if the residuals are constant
-        # then they will produce a correlation of ones everywhere.
-        ones = jnp.ones_like(res)
-        auto_corr_ones = jax.scipy.signal.correlate2d(ones, ones)
-        auto_corr /= auto_corr_ones
-        
-        # Find the centre of the auto_corr 2D array
-        n_l, n_t = auto_corr.shape
-        auto_corr_centre = ((n_l-1)//2, (n_t-1)//2)
-        
-        if not cov:
-            # Unless calculating the autocovariance we divide by the variance at zero separation
-            auto_corr /= auto_corr[auto_corr_centre[0], auto_corr_centre[1]]
-        
-        if zero_centre:
-            # Can be helpful to zero the centre (which will always show correlation = 1)
-            # to help visualise weaker correlation at non-zero separations
-            auto_corr = auto_corr.at[auto_corr_centre[0], auto_corr_centre[1]].set(0.)
-
-        if plot:
-            if mat is None and plot_kwargs is None:
-                # Calculate the x and y axes values assuming equal separation of data points
-                # It is assumed if giving values to plot_kwargs that this will be handled by the user
-                
-                # First check if x_l and x_t contain multiple rows in which case pick the top row
-                if self.x_l.ndim > 1:
-                    x_l_plot = self.x_l[:, 0]
-                else:
-                    x_l_plot = self.x_l
-
-                if self.x_t.ndim > 1:
-                    x_l_plot = self.x_t[:, 0]
-                else:
-                    x_l_plot = self.x_t
-
-                # Calculates the average separation between points along each dimension
-                l_step = x_l_plot.ptp()/(self.N_l-1)
-                t_step = x_l_plot.ptp()/(self.N_t-1)
-
-                
-                # Calculate the maximum separations in each dimension in values given in x_l and x_t
-                extent = [t_step*-(max_sep_t+0.5), t_step*(max_sep_t+0.5),
-                          l_step*(max_sep_l+0.5), l_step*-(max_sep_l+0.5)]
-            else:
-                extent = None
-            
-            # Select the correct range of separations to plot
-            l_plot_range = [auto_corr_centre[0]-max_sep_l, auto_corr_centre[0]+max_sep_l+1]
-            t_plot_range = [auto_corr_centre[1]-max_sep_t, auto_corr_centre[1]+max_sep_t+1]
-            
-            if plot_kwargs:
-                fig = plt.imshow(auto_corr[l_plot_range[0]:l_plot_range[1], t_plot_range[0]:t_plot_range[1]],
-                           **plot_kwargs)
-            else:
-                fig = plt.imshow(auto_corr[l_plot_range[0]:l_plot_range[1], t_plot_range[0]:t_plot_range[1]],
-                           aspect = 'auto', interpolation = "none", extent = extent)
-            
-            plt.xlabel(r"$\Delta$t")
-            plt.ylabel(r"$\Delta$l")
-            plt.colorbar()
-            
-            return auto_corr, fig
-
-        else:
-            # If not plotting then just returns the autocorrelation matrix
-            return auto_corr
-    
 
     
     def laplace_approx(
@@ -1302,24 +1006,6 @@ class GP(object):
         if return_fig:
             return fig
 
-
-    def gp_mean_calc(
-            self,
-            p,
-            Y,
-            return_mf = False,
-    ):
-        # Perform GP regression at the observed data locations
-        M = self.mf(p, self.x)
-        
-        res = Y - M
-        K_inv_R = self.apply_inverse(p, res)
-        gp_mean = M + self.matmul(p, K_inv_R, wn = False, full = True)
-
-        if return_mf:
-            return gp_mean, M
-        else:
-            return gp_mean
     
 
     def plot(
@@ -1387,7 +1073,12 @@ class GP(object):
         data = [Y, M, gp_mean - M, Y - gp_mean]
 
         if self.dim == 1:
-            for i in range(4):
+            ax[0].plot(x_plot[0], Y, label = "Data")
+            ax[0].plot(x_plot[0], M, label = "Mean function")
+            ax[0].plot(x_plot[0], gp_mean, label = "GP mean")
+            ax[0].legend()
+
+            for i in range(1, 4):
                 ax[i].plot(x_plot[0], data[i])
                 ax[i].set_xlabel(axes_labels[0])
                 ax[i].set_title(titles[i])
@@ -1421,7 +1112,297 @@ class GP(object):
             return gp_mean, M
     
     
+    def autocorrelate(
+        self,
+        p: PyTree,
+        Y: JAXArray,
+        max_sep_l: Optional[int] = None,
+        max_sep_t: Optional[int] = None,
+        include_gp_mean: Optional[bool] = True,
+        mat: Optional[JAXArray] = None,
+        plot: Optional[bool] = True,
+        plot_kwargs: Optional[dict] = None,
+        zero_centre: Optional[bool] = False,
+        cov: Optional[bool] = False,
+    ) -> Union[JAXArray, Tuple[JAXArray, plt.Figure]]:
+        """Performs a quick (and approximate) 2D autocorrelation using ``jax.scipy.signal.correlate2d``
+        on the observed data after subtraction of the GP predictive mean to examine if there is any
+        remaining correlation in the residuals.
+        
+        Note:
+            This function also assumes the data is evenly spaced in both dimensions. It is also
+            not an exact autocorrelation as the mean is not subtracted for each set of residuals and therefore
+            it is assumed the residuals always have mean zero. Also instead of dividing by the standard deviations
+            of the specific residuals being multiplied together, all values are divided by the overall variance
+            of the residuals. This can result in some values having correlation lying outside the interval [-1, 1]
+            but runs very efficiently and should be reasonably accurate unless considering correlations between
+            widely separated parts of the data. For this reason, by default only half the separation of the data
+            is visualised in the plots.
+        
+        If ``include_gp_mean = False`` then shows the autocorrelation of the observed data minus
+        the mean function (without the GP predictive mean) which is useful for visualising
+        what kernel function to use when fitting with a GP.
+        
+        Can also just input a general matrix ``mat`` to run an autocorrelation on, in which case the inputs
+        ``p`` and ``Y`` are ignored.
+        
+        Args:
+            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
+                in addition to any mean function parameters which may be needed to calculate the mean function.
+            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
+            max_sep_l (int, optional): The maximum separation of wavelengths/rows to visualise the correlation of.
+                This is given as an integer referring to the number of rows apart to show. Defaults to half the
+                number of rows in the observed data ``Y``.
+            max_sep_t (int, optional): The maximum separation of time/columns to visualise the correlation of. This
+                is given as an integer referring to the number of columns apart to show. Defaults to half the
+                number of columns in the observed data ``Y``.
+            include_gp_mean (bool, optional): Whether to subtract the GP predictive mean from the observed data
+                when calculating the residuals. If ``False`` will still subtract the deterministic mean function.
+                Useful for visualising correlation in a data set to aid in kernel choice before fitting with a GP.
+            mat (JAXArray, optional): Instead of using the residuals of the observed data, providing a
+                matrix for this argument will calculate the autocorrelation of this given matrix instead.
+            plot (bool, optional): If ``True`` then will produce a plot visualising the autocorrelation.
+                Defaults to ``True``.
+            zero_centre (bool, optional): Whether to set the correlation at zero separation to 0.
+                Since the correlation at zero separation is always 1 it can make it hard to visualise
+                correlation values which are very small so setting this to ``True`` can aid visualisation.
+                Defaults to ``False``.
+            cov (bool, optional): If ``True`` will return the autocovariance matrix instead.
+            
+        Returns:
+            JAXArray or (JAXArray, plt.Figure): Returns the autocorrelation matrix of the residuals. If
+            ``plot = True`` then will return a tuple with the generated ``plt.Figure`` also added.
+        
+        """
+        
+        # Sets the maximum separation to visualise the autocorrelation for
+        # Once separations are too large the autocorrelation becomes very noisy
+        # as it is based off of very few values
+        if mat is not None:
+            # If a general matrix mat is given, defaults to autocorrelation of half its length
+            # in each dimension
+            if max_sep_l is None:
+                max_sep_l = mat.shape[0]//2
+            if max_sep_t is None:
+                max_sep_t = mat.shape[1]//2
+                
+            # Set residuals matrix equal to mat
+            res = mat
+            
+        else:
+            # For a matrix of residuals will also default to half the length of the data in
+            # each dimension
+            if max_sep_l is None:
+                max_sep_l = self.N_l//2
+            if max_sep_t is None:
+                max_sep_t = self.N_t//2
+        
+        
+            if include_gp_mean:
+                # Perform GP regression
+                gp_mean, sigma_diag, M = self.predict(p, Y)
+            
+                # Includes GP mean fit to data when subtracting from observed data
+                res = Y - gp_mean
+            else:
+                M = self.mf(p, self.x)
+                # Only calculates the observed data minus the deterministic mean function
+                res = Y - M
+            
+        # Performs the autocorrelation of the res matrix
+        auto_corr = jax.scipy.signal.correlate2d(res, res)
+        
+        # jax.scipy.signal.correlate2d will pad with zeros as necessary for the autocorrelation
+        # which will artificially reduce the strength of correlation at large separations.
+        # These lines autocorrelate a matrix of ones to divide auto_corr by so that a values
+        # with more zeros used for padding will be divided through by lower numbers
+        # This should normalise things correctly and ensures if the residuals are constant
+        # then they will produce a correlation of ones everywhere.
+        ones = jnp.ones_like(res)
+        auto_corr_ones = jax.scipy.signal.correlate2d(ones, ones)
+        auto_corr /= auto_corr_ones
+        
+        # Find the centre of the auto_corr 2D array
+        n_l, n_t = auto_corr.shape
+        auto_corr_centre = ((n_l-1)//2, (n_t-1)//2)
+        
+        if not cov:
+            # Unless calculating the autocovariance we divide by the variance at zero separation
+            auto_corr /= auto_corr[auto_corr_centre[0], auto_corr_centre[1]]
+        
+        if zero_centre:
+            # Can be helpful to zero the centre (which will always show correlation = 1)
+            # to help visualise weaker correlation at non-zero separations
+            auto_corr = auto_corr.at[auto_corr_centre[0], auto_corr_centre[1]].set(0.)
 
+        if plot:
+            if mat is None and plot_kwargs is None:
+                # Calculate the x and y axes values assuming equal separation of data points
+                # It is assumed if giving values to plot_kwargs that this will be handled by the user
+                
+                # First check if x_l and x_t contain multiple rows in which case pick the top row
+                if self.x_l.ndim > 1:
+                    x_l_plot = self.x_l[:, 0]
+                else:
+                    x_l_plot = self.x_l
+
+                if self.x_t.ndim > 1:
+                    x_l_plot = self.x_t[:, 0]
+                else:
+                    x_l_plot = self.x_t
+
+                # Calculates the average separation between points along each dimension
+                l_step = x_l_plot.ptp()/(self.N_l-1)
+                t_step = x_l_plot.ptp()/(self.N_t-1)
+
+                
+                # Calculate the maximum separations in each dimension in values given in x_l and x_t
+                extent = [t_step*-(max_sep_t+0.5), t_step*(max_sep_t+0.5),
+                            l_step*(max_sep_l+0.5), l_step*-(max_sep_l+0.5)]
+            else:
+                extent = None
+            
+            # Select the correct range of separations to plot
+            l_plot_range = [auto_corr_centre[0]-max_sep_l, auto_corr_centre[0]+max_sep_l+1]
+            t_plot_range = [auto_corr_centre[1]-max_sep_t, auto_corr_centre[1]+max_sep_t+1]
+            
+            if plot_kwargs:
+                fig = plt.imshow(auto_corr[l_plot_range[0]:l_plot_range[1], t_plot_range[0]:t_plot_range[1]],
+                            **plot_kwargs)
+            else:
+                fig = plt.imshow(auto_corr[l_plot_range[0]:l_plot_range[1], t_plot_range[0]:t_plot_range[1]],
+                            aspect = 'auto', interpolation = "none", extent = extent)
+            
+            plt.xlabel(r"$\Delta$t")
+            plt.ylabel(r"$\Delta$l")
+            plt.colorbar()
+            
+            return auto_corr, fig
+
+        else:
+            # If not plotting then just returns the autocorrelation matrix
+            return auto_corr
+    
+
+
+    def transform_fn(
+        self,
+        p: PyTree,
+        Y: JAXArray,
+        inverse = True,
+        transpose = 0,
+    ) -> Scalar:
+        """Computes the log likelihood without returning any stored values from the
+        decomposition of the covariance matrix.
+        
+        Args:
+            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
+                in addition to any mean function parameters which may be needed to calculate the mean function.
+            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
+        
+        Returns:
+            Scalar: The value of the log likelihood.
+            
+        """
+        
+        # Calculate the residuals after subtraction of the deterministic mean function
+        R = Y - self.mf(p, self.x)
+        self.kf_eval = self.build_kf(p, self.x)
+        
+        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
+        
+        if inverse:
+            logL_val = self.kf_eval.inv_transform_fn(R, transpose = transpose)
+        else:
+            logL_val = self.kf_eval.transform_fn(R, transpose = transpose)
+        
+        return logL_val
+
+
+
+    def apply_inverse(
+        self,
+        p: PyTree,
+        R: JAXArray,
+        **kwargs,
+    ) -> Scalar:
+        
+        self.kf_eval = self.build_kf(p, self.x)
+        
+        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
+        K_inv_R = self.kf_eval.inverse(R, **kwargs)
+        
+        return K_inv_R
+
+    
+    def matmul(
+        self,
+        p: PyTree,
+        R: JAXArray,
+        full = True,
+        **kwargs,
+    ) -> Scalar:
+        
+        self.kf_eval = self.build_kf(p, self.x)
+
+        if len(self.x) == 1:
+            K_R = self.kf_eval.matmul(self.x[0], self.x[0], R, full = full, **kwargs)
+        else:
+            K_R = self.kf_eval.matmul(self.x, self.x, R, full = full, **kwargs)
+        
+        return K_R
+        
+
+    def orthogonalise(self, p, A):
+        if self.opt_name == "MultiLowRankKernel":
+            self.kf_eval = self.build_kf(p, self.x)
+            return self.kf_eval.make_orthogonal(A, self.x)
+        else:
+            raise Exception("Orthogonalising components only compatible with MultiLowRankKernel")
+
+        
+    def apply_matrix_sqrt(
+        self,
+        p: PyTree,
+        R: JAXArray,
+        transpose = 0,
+    ) -> Scalar:
+        
+        self.kf_eval = self.build_kf(p, self.x)
+        
+        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
+        L_R = self.kf_eval.matrix_sqrt(R, transpose = transpose)
+        
+        return L_R
+
+
+    def apply_matrix_inv_sqrt(
+        self,
+        p: PyTree,
+        R: JAXArray,
+        transpose = 0,
+    ) -> Scalar:
+        """Computes the log likelihood without returning any stored values from the
+        decomposition of the covariance matrix.
+        
+        Args:
+            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
+                in addition to any mean function parameters which may be needed to calculate the mean function.
+            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
+        
+        Returns:
+            Scalar: The value of the log likelihood.
+            
+        """
+        
+        self.kf_eval = self.build_kf(p, self.x)
+        
+        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
+        L_inv_R = self.kf_eval.matrix_inv_sqrt(R, transpose = transpose)
+        
+        return L_inv_R
+
+    
     
     def logL_hessianable(
         self,
@@ -1568,30 +1549,7 @@ class GP(object):
         
         return logP, stored_values
     
-
-    def studentT_logL(
-        self,
-        p,
-        Y,
-    ):
-        R = Y - self.mf(p, self.x)
-        self.kf_eval = self.build_kf(p, self.x)
         
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x)
-        
-        logdetK = stored_values["logdetK"]
-        r_K_inv_r = self.kf_eval.dot_solve(R)
-        
-        nu = jnp.power(10, p["nu"])
-        
-        N = R.size
-        other_terms = gammaln(0.5*(nu+N)) - gammaln(0.5 * nu) - 0.5 * N * jnp.log(jnp.pi*nu)
-        
-        logL = - 0.5 * (nu + N) * jnp.log(1 + r_K_inv_r/nu) - 0.5 * logdetK + other_terms
-
-        return logL
-        
-    
 
 def interp_params(p_obs, p_pred, x, x_pred,
             interp_param = None, interp_row = 0):
@@ -1655,7 +1613,7 @@ def stack_obs_and_pred_points(x, x_pred, sort = None):
 
         sort_fn = lambda mat, sort_axis = 0: mat[sort_ind]
     else:
-        sort_fn = None
+        sort_fn = lambda mat, sort_axis = 0: mat
 
     return x_total, x_pred, obs_points, pred_points, sort_fn
     

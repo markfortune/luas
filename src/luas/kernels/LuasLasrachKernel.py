@@ -162,12 +162,17 @@ class LuasLasrachKernel(CovType):
         self,
         Sigma,
         K,
+        *, # force keyword only after this
         fast_dim: int | None = None,
         use_stored_values: Optional[bool] = False,
         use_pmap = False,
         **kwargs,
     ):
-        assert fast_dim is not None # Must specify the fast_dim
+        if fast_dim is None:
+            # Must specify the fast_dim
+            raise Exception("Must specify fast_dim, which is the dimension which will not be eigendecomposed/simultaneously diagonlised.\
+                            Typically this dimension should be fast to decompose e.g. using luas.kernels.quasisep, or else the other dimension should be small.")
+
         self.Sigma = Sigma
         self.K = K
         self.fast_dim = fast_dim

@@ -78,7 +78,6 @@ class HouseholderandDiagonalTransform:
     def __init__(self, vec, diag, i = -1, transpose = 0):
         self.vec = vec
         self.diag = diag
-        self.T = self
         self.transpose = transpose
         basis_vec = jnp.zeros_like(vec)
         basis_vec = basis_vec.at[i].set(1)
@@ -101,7 +100,7 @@ class HouseholderandDiagonalTransform:
                 other_prime -= 2 * jnp.kron(self.u_hat, self.u_hat @ other_prime)
         elif other.ndim == 2:
             if self.transpose:
-                other_prime = other - 2 * jnp.outer(self.u_hat, self.u_hat @ other)
+                other_prime = other - 2 * jnp.outer(self.u_hat, self.u_hat @ other_prime)
                 other_prime = jnp.einsum('i,i...->i...', self.diag, other)
             else:
                 other_prime = jnp.einsum('i,i...->i...', self.diag, other)
@@ -115,9 +114,19 @@ class HouseholderandDiagonalTransform:
 
     def __rmatmul__(self, other):
         if other.ndim == 1:
-            return other - 2 * jnp.kron(other @ self.u_hat, self.u_hat)
+            if self.transpose:
+                other_prime = self.diag * other
+                other_prime -= 2 * jnp.kron(other_prime @ self.u_hat, self.u_hat)
+            else:
+                other_prime = other - 2 * jnp.kron(other @ self.u_hat, self.u_hat)
+                other_prime = self.diag * other_prime
         elif other.ndim == 2:
-            return other - 2 * jnp.outer(other @ self.u_hat, self.u_hat @ other)
+            if self.transpose:
+                other_prime = jnp.einsum('i,i...->i...', self.diag, other)
+                other_prime -= 2 * jnp.kron(other_prime @ self.u_hat, self.u_hat)
+            else:
+                other_prime = other - 2 * jnp.kron(other @ self.u_hat, self.u_hat)
+                other_prime = jnp.einsum('i,i...->i...', self.diag, other_prime)
         else:
             raise Exception("Not implemented")
 
@@ -206,16 +215,18 @@ class HouseholderTransform:
 
 
 
-def orthonormal_nullspace_gen(A, reverse = False):
+def householder_qr_and_orthogonalise(A, reverse = False):
     
     N_alpha = A.shape[1]
 
     # Compute the QR decomposition of A (produces orthonormal basis for the column space of A)
     # More numerically stable than the Gram-Schmidt process used in orthonormal_nullspace_gen_unstable
+    # V @ J = A, if A is (N_l, N_alpha) then V is (N_l, N_alpha) and J is (N_alpha, N_alpha)
+    # V guaranteed orthonormal, V forms first N_alpha columns of Q, J is top N_alpha rows of R, where Q @ R = A
     V, J = jnp.linalg.qr(A, mode = 'reduced')
     
+    # Create Householder vectors from V, flipping signs when needed for numerical stability
     U = jnp.zeros_like(A)
-    # Householder vector
     for i in range(N_alpha):
         w_i = V[:, i]
 
@@ -235,6 +246,8 @@ def orthonormal_nullspace_gen(A, reverse = False):
 
         U = U.at[:, i].set(u_i)
 
+    # Create fast H @ R function where H is a product of Householder matrices
+    # Equivalent to multiplying by Q where A = Q @ R
     def householder_transform(R, transpose = 0):
         R_prime = R.copy()
 
@@ -248,46 +261,47 @@ def orthonormal_nullspace_gen(A, reverse = False):
                 R_prime -= jnp.outer(2*U[:, i], u_R_prime)
 
         return R_prime
+
+    J = jnp.diag(jnp.diag(J))
+    A_ortho = V @ J
     
-    return J, U, householder_transform
+    return J, U, householder_transform, A_ortho
 
 
-def orthonormal_nullspace_gen_unstable(A, reverse = False):
+
+def householder_qr(A, reverse = False):
     
-    N_l = A.shape[0]
     N_alpha = A.shape[1]
 
-    V = jnp.zeros_like(A)
-    U = jnp.zeros_like(A)
-    J = jnp.zeros((N_alpha, N_alpha))
-
-    for i in range(N_alpha):
-        v_i = A[:, i]
-        for j in range(i):
-            J = J.at[j, i].set(jnp.dot(v_i, V[:, j]))
-            v_i -= J[j, i] * V[:, j]
-            
-        J = J.at[i, i].set(jnp.linalg.norm(v_i))
-        v_i /= J[i, i]
-        V = V.at[:, i].set(v_i)
+    # Compute the QR decomposition of A (produces orthonormal basis for the column space of A)
+    # More numerically stable than the Gram-Schmidt process used in orthonormal_nullspace_gen_unstable
+    # V @ J = A, if A is (N_l, N_alpha) then V is (N_l, N_alpha) and J is (N_alpha, N_alpha)
+    # V guaranteed orthonormal, V forms first N_alpha columns of Q, J is top N_alpha rows of R, where Q @ R = A
+    V, J = jnp.linalg.qr(A, mode = 'reduced')
     
-    # Householder vector
+    # Create Householder vectors from V, flipping signs when needed for numerical stability
+    U = jnp.zeros_like(A)
     for i in range(N_alpha):
         w_i = V[:, i]
+
         for j in range(i):
             w_i -= 2 * jnp.dot(U[:, j], w_i) * U[:, j]
 
-        e_i = jnp.zeros(N_l)
-        if reverse:
-            e_i = e_i.at[-N_alpha + i].set(1)
-        else:
-            e_i = e_i.at[i].set(1)
-        
-        u_i = w_i - e_i
+        idx = -N_alpha + i if reverse else i
+
+        # sign chosen so u = w + s*e_i never cancels; define sign(0) = +1
+        s = jnp.where(w_i[idx] >= 0, 1.0, -1.0)
+
+        # Must flip the sign of corresponding row of J to construct the correct vector from flipped orthogonal vector
+        J = J.at[idx, :].multiply(s)
+
+        u_i = w_i.at[idx].add(s)
         u_i /= jnp.linalg.norm(u_i)
 
         U = U.at[:, i].set(u_i)
 
+    # Create fast H @ R function where H is a product of Householder matrices
+    # Equivalent to multiplying by Q where A = Q @ R
     def householder_transform(R, transpose = 0):
         R_prime = R.copy()
 
@@ -303,5 +317,3 @@ def orthonormal_nullspace_gen_unstable(A, reverse = False):
         return R_prime
     
     return J, U, householder_transform
-
-    
