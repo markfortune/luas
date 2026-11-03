@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 from luas.kernels.covtype import CovType
+from luas.kronecker_fns import calc_data_shape
 
 __all__ = ["Conditional"]
 
@@ -10,7 +11,7 @@ class Conditional(CovType):
         self.kf_full = kf_full
         self.kf_train = kf_train
         self.X_full = X_full
-        self.N_full = (X_full[0].shape[-1], X_full[1].shape[-1])
+        self.N_full = calc_data_shape(X_full)
         self.observed_ind = observed_ind
         self.predicted_ind = predicted_ind
         self.logdet_K_train = logdet_K_train

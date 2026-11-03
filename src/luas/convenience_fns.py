@@ -555,38 +555,37 @@ def bin_data_2D(x_l, x_t, Y, l_bin, t_bin):
 
 def interp_params(p_obs, p_pred, x, x_pred,
             interp_param = None, interp_row = 0):
-    
-    p_interp = deepcopy(p_pred)
-    
-    if x.ndim > 1:
-        x = x[interp_row, :]
-        x_pred = x_pred[interp_row, :]
-    
-    for par in interp_param:
-        p_interp[par] = jnp.interp(x_pred, x, p_obs[par])
-            
-    return p_interp
+
+    if interp_param is None:
+        return p_pred
+    else:
+        p_interp = deepcopy(p_pred)
+        
+        if x.ndim > 1:
+            x = x[interp_row, :]
+            x_pred = x_pred[interp_row, :]
+        
+        for par in interp_param:
+            p_interp[par] = jnp.interp(x_pred, x, p_obs[par])
+                
+        return p_interp
     
 
-def stack_params(p_obs, p_pred,
-                 stack_names_dim1 = [], stack_names_dim2 = [],
-                 sort_fn_dim1 = None, sort_fn_dim2 = None):
+def stack_params(p_obs, p_pred, stack_names = [], sort_fns = []):
 
-    p_stack = deepcopy(p_obs)
-    
-    for par in stack_names_dim1:
-        p_stack[par] = jnp.concatenate([p_obs[par], p_pred[par]])
+    if stack_names is None:
+        return p_obs
+    else:
+        p_stack = deepcopy(p_obs)
 
-        if sort_fn_dim1 is not None:
-            p_stack[par] = sort_fn_dim1(p_stack[par])
+        for d in range(len(stack_names)):
+            for par in stack_names[d]:
+                p_stack[par] = jnp.concatenate([p_obs[par], p_pred[par]])
 
-    for par in stack_names_dim2:
-        p_stack[par] = jnp.concatenate([p_obs[par], p_pred[par]])
-
-        if sort_fn_dim2 is not None:
-            p_stack[par] = sort_fn_dim2(p_stack[par])
-            
-    return p_stack
+                if sort_fns[d] is not None:
+                    p_stack[par] = sort_fns[d](p_stack[par])
+                
+        return p_stack
 
 
 def stack_obs_and_pred_points(x, x_pred, sort = None):

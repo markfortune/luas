@@ -46,23 +46,23 @@ class LowRank(General):
         return self.fixed_rank
 
     def scale(self, c):
-        return LowRank(kf = lambda hp, x1, x2, **kwargs: c*self.evaluate(x1, x2, **kwargs), rank = self.fixed_rank, use_shared_memory=self.use_shared_memory)
+        return LowRank(kf = lambda hp, x1, x2, **kwargs: c*self.evaluate(x1, x2, **kwargs), rank = self.fixed_rank)
     
     def __add__(self, other):
         if isinstance(other, LowRank):
             return LowRank(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) + other.evaluate(x1, x2, **kwargs),
-                           rank = self.fixed_rank + other.fixed_rank, use_shared_memory=self.use_shared_memory and other.use_shared_memory)
+                           rank = self.fixed_rank + other.fixed_rank)
         if isinstance(other, Outer):
             return LowRank(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) + other.evaluate(x1, x2, **kwargs),
-                           rank = self.fixed_rank + 1, use_shared_memory=self.use_shared_memory)
+                           rank = self.fixed_rank + 1)
         # elif isinstance(other, CovType):
         #     return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) + other.evaluate(x1, x2, **kwargs))
         elif isinstance(other, (jax.Array, np.ndarray)) or is_scalar(other):
             return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) + other)
         else:
-            raise Exception("Addition not implemented")
-        
-    def transform_with_inv_sqrt(self, matrix_sqrt_fn, x):
+            return NotImplemented
+
+    def transform_with_inv_sqrt(self, matrix_sqrt_fn, x, **kwargs):
         if self.V is not None:
             return self
         else:
@@ -73,7 +73,7 @@ class LowRank(General):
                     
                     return K_tilde
 
-            return LowRank(kf_transf, rank = self.fixed_rank, use_shared_memory=self.use_shared_memory)
+            return LowRank(kf_transf, rank = self.fixed_rank)
 
 
     def evaluate(self, x1, x2, **kwargs):
@@ -91,7 +91,7 @@ class LowRank(General):
         elif isinstance(other, jax.Array) or isinstance(other, np.ndarray):
             return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) * other)
         else:
-            raise Exception("Not implemented")
+            return NotImplemented
 
 
 

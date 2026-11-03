@@ -212,28 +212,29 @@ class MixingMatQuasisep(CovType):
                                  fast_dim = self.fast_dim, noise_model = self.noise_model)
     
 
-    def __add__(self, K):
+    def __add__(self, other):
 
-        if isinstance(K, MixingMatQuasisep):
-            assert self.mixing_mat.shape[0] == K.mixing_mat.shape[0]
+        if isinstance(other, MixingMatQuasisep):
+            if self.fast_dim != other.fast_dim or self.mixing_mat.shape[0] != other.mixing_mat.shape[0]:
+                raise Exception("Cannot add two MixingMatQuasisep CovTypes with different fast_dim or different lengths")
 
-            new_mixing_mat = jnp.concatenate([self.mixing_mat, K.mixing_mat], axis = 1)
-            new_kernel_list = self.kernel_list + K.kernel_list
+            new_mixing_mat = jnp.concatenate([self.mixing_mat, other.mixing_mat], axis = 1)
+            new_kernel_list = self.kernel_list + other.kernel_list
 
-            if self.noise_model is not None and K.noise_model is not None:
-                new_noise_model = self.noise_model + K.noise_model
+            if self.noise_model is not None and other.noise_model is not None:
+                new_noise_model = self.noise_model + other.noise_model
             elif self.noise_model is not None:
                 new_noise_model = self.noise_model
-            elif K.noise_model is not None:
-                new_noise_model = K.noise_model
+            elif other.noise_model is not None:
+                new_noise_model = other.noise_model
             else:
                 new_noise_model = None
                 
-            K_sum = MixingMatQuasisep(new_mixing_mat, new_kernel_list, diag = self.diag + K.diag, wn_diag = self.wn_diag + K.wn_diag,
+            K_sum = MixingMatQuasisep(new_mixing_mat, new_kernel_list, diag = self.diag + other.diag, wn_diag = self.wn_diag + other.wn_diag,
                                       fast_dim = self.fast_dim, noise_model = new_noise_model)
             
         else:
-            raise Exception(f"{type(K)} not recognised or addition not supported")
+            raise Exception(f"Addition between {type(self).__name__} and {type(other).__name__} not recognised or addition not supported")
             
         return K_sum
     

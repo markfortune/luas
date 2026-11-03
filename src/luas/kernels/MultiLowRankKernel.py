@@ -1,9 +1,6 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import jax.numpy as jnp
-import jax
 from typing import Callable, Tuple, Union, Any, Optional
-import tinygp
 
 from luas import WhiteNoiseKernel, SeparableKernel
 from luas.kernels.covtype import Outer, GeneralQuasisepPlusNoise, GeneralQuasisep, CovType, Identity, ScaledIdentity, Diagonal

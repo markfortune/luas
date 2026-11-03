@@ -4,6 +4,7 @@ from copy import deepcopy
 import jax
 import jax.numpy as jnp
 from typing import Any, Optional, Callable, Union, Dict, Tuple
+from tqdm import tqdm
 
 from luas.kernel_selector import kernel_selector
 from luas.kernels.covtype import CovType
@@ -157,7 +158,7 @@ class GP(object):
             self.logP_hessianable = jax.jit(self.logP_hessianable)
 
 
-    def sample(self, p, add_mf = True):
+    def sample(self, p, add_mf = True, samples = 1, return_variance = False):
         """Sample from the GP prior distribution. Useful for visualising a GP model and generating synthetic data.
         
         Args:
@@ -176,14 +177,45 @@ class GP(object):
         # The Conditional CovType has a non-square matrix square root
         # which expects a random normal vector of a different shape to the output data
         z_shape = getattr(self.kf_eval, "sqrt_input_shape", self.data_shape)
-        z = np.random.normal(size = z_shape)
-        R = self.kf_eval.matrix_sqrt(z)
+
+        if samples == 1:
+            z = np.random.normal(size = z_shape)
+            R = self.kf_eval.matrix_sqrt(z)
+        else:
+            z = np.random.normal(size = (samples, *z_shape))
+            matrix_sqrt_jit = jax.jit(self.kf_eval.matrix_sqrt)
+
+            if return_variance:
+                variance = jnp.zeros(self.data_shape)
+                for i in tqdm(range(samples)):
+                    # for loop because vmap can be super memory intensive
+                    variance += matrix_sqrt_jit(z[i, ...])**2
+                return variance/(samples - 1)
+            else:
+                R = jnp.zeros((samples, *self.data_shape))
+                for i in tqdm(range(samples)):
+                    # for loop because vmap can be super memory intensive
+                    R = R.at[i, ...].set(matrix_sqrt_jit(z[i, ...]))
 
         if add_mf:
             R += self.mf(p, self.x)
         
         return R
 
+    def get_diagonal(self, p, samples = None, **kwargs):
+
+        self.kf_eval = self.build_kf(p, self.x)
+
+        try:
+            return self.kf_eval.diagonal(self.x, **kwargs)
+        except:
+            if samples is not None:
+                print("Estimating diagonal of GP covariance matrix stochastically, this may take a while for large models...")
+                diagonal_est = self.sample(p, samples = samples, return_variance = True)
+                return diagonal_est
+            else:
+                raise Exception("Evaluating the diagonal of the covariance matrix not implemented!\
+                                You can evaluate it stochastically, e.g. by setting samples = 1000")
     
     def logL(
         self,
@@ -437,11 +469,12 @@ class GP(object):
                 p_pred = None,
                 X_obs = None,
                 X_pred = None,
-                interp_params_dim1 = [], interp_params_dim2 = [],
-                interp_row_l = None, interp_row_t = None,
-                stack_p_dim1 = [], stack_p_dim2 = [], 
-                sort_l = True, sort_t = True,
-                fast_dim = None, return_predicted_loc = True):
+                params_to_stack = None,
+                params_to_interpolate = None,
+                input_vecs_for_interp = None,
+                sort = None,
+                fast_dim = None, return_predicted_loc = True,
+                return_pred_err = False, samples = 1000):
     
         r"""Performs GP regression and computes the GP predictive mean and the GP predictive
         uncertainty as the standard devation at each location or else can return the full
@@ -485,53 +518,81 @@ class GP(object):
             evalulated at the prediction locations.
         
         """
+        if self.dim != 1 and self.dim != 2:
+            raise Exception(f"GP prediction only implemented for 1D and 2D GPs, not {self.dim} dimensions")
+        
         p_obs = deepcopy(p)
 
         if X_obs is None:
+            # If observed locations not specified, assume training on the full dataset
             X_obs = deepcopy(self.x)
         
         if p_pred is None:
+            # If predicted params not specified, assume they match the observed parameters
+            # But may stack/interpolate to new predicted locations
             p_pred = deepcopy(p_obs)
+
+        if sort is None:
+            # Important to sort for most quasisep kernels
+            sort = [True]*self.dim
         
-        pred_loc_equals_obs = False
         if X_pred is None:
             # If no prediction locations given then taken to be same as observed locations
             pred_loc_equals_obs = True
-            
-            if fast_dim is None or fast_dim == 0:
+
+            if self.dim == 1:
+                X_pred = X_obs.copy()
+            elif fast_dim is None or fast_dim == 0:
                 X_pred = [X_obs[0], None]
             elif fast_dim == 1:
                 X_pred = [None, X_obs[1]]
             else:
                 raise Exception("fast_dim keyword argument must be None, 0 or 1")
-    
-        # Stack observed and predicted locations together for each dimension
-        # Works out location of predicted and observed locations within array
-        # Will sort the full stacked regression variables if requested, necessary for celerite dimensions
-        x_l_full, X_pred[0], obs_points_l, pred_points_l, sort_fn_l = stack_obs_and_pred_points(X_obs[0], X_pred[0], sort = sort_l)
-        x_t_full, X_pred[1], obs_points_t, pred_points_t, sort_fn_t = stack_obs_and_pred_points(X_obs[1], X_pred[1], sort = sort_t)
-
-        X_full = (x_l_full, x_t_full)
-        N_full = (X_full[0].shape[-1], X_full[1].shape[-1])
-        
-        observed_ind = jnp.ix_(jnp.arange(N_full[0])[obs_points_l],
-                               jnp.arange(N_full[1])[obs_points_t])
-    
-        if return_predicted_loc:
-            # Will only output locations at grid inputs of (X_pred)
-            predicted_ind = jnp.ix_(jnp.arange(N_full[0])[pred_points_l],
-                                    jnp.arange(N_full[1])[pred_points_t])
         else:
-            # Returns the full output locations at X_full
-            predicted_ind = jnp.ix_(jnp.arange(N_full[0]), jnp.arange(N_full[1]))
-        
-        p_pred = interp_params(p_obs, p_pred, X_obs[0], X_pred[0],
-                               interp_param = interp_params_dim1,
-                               interp_row = interp_row_l)
-        p_pred = interp_params(p_obs, p_pred, X_obs[1], X_pred[1],
-                               interp_param = interp_params_dim2,
-                               interp_row = interp_row_t)
+            pred_loc_equals_obs = False
+
     
+        # Stacks or interpolates parameters from observed locations to predicted locations for each dimension
+        # Works out location of predicted and observed locations within array
+        # Will sort the full stacked regression variables if requested, typically necessary for quasisep dimensions
+        if self.dim == 1:
+            X_full, X_pred, obs_points, pred_points, sort_fn = stack_obs_and_pred_points(X_obs, X_pred, sort = sort)
+            N_full = X_full.shape[-1]
+            sort_fns = [sort_fn]
+
+            if params_to_stack is not None:
+                params_to_stack = [params_to_stack]
+            observed_ind = jnp.arange(N_full)[obs_points]
+            predicted_ind = jnp.arange(N_full)[pred_points]
+            p_pred = interp_params(p_obs, p_pred, X_obs, X_pred,
+                                    interp_param = params_to_interpolate,
+                                    interp_row = input_vecs_for_interp)
+
+        elif self.dim == 2:
+            x_l_full, X_pred[0], obs_points_l, pred_points_l, sort_fn_l = stack_obs_and_pred_points(X_obs[0], X_pred[0], sort = sort[0])
+            x_t_full, X_pred[1], obs_points_t, pred_points_t, sort_fn_t = stack_obs_and_pred_points(X_obs[1], X_pred[1], sort = sort[1])
+            sort_fns = [sort_fn_l, sort_fn_t]
+            X_full = (x_l_full, x_t_full)
+            N_full = calc_data_shape(X_full)
+            
+            observed_ind = jnp.ix_(jnp.arange(N_full[0])[obs_points_l],
+                                jnp.arange(N_full[1])[obs_points_t])
+        
+            if return_predicted_loc:
+                # Will only output locations at grid inputs of (X_pred)
+                predicted_ind = jnp.ix_(jnp.arange(N_full[0])[pred_points_l],
+                                        jnp.arange(N_full[1])[pred_points_t])
+            else:
+                # Returns the full output locations at X_full
+                predicted_ind = jnp.ix_(jnp.arange(N_full[0]), jnp.arange(N_full[1]))
+
+            if params_to_interpolate is not None:
+                for d in range(self.dim):
+                    p_pred = interp_params(p_obs, p_pred, X_obs[d], X_pred[d],
+                                        interp_param = params_to_interpolate[d],
+                                        interp_row = input_vecs_for_interp[d])
+
+
         # GP mean calculation
         # Calculate mean function at observed locations
         M_obs = self.mf(p_obs, X_obs)
@@ -547,14 +608,12 @@ class GP(object):
         kf_eval_train = self.kf_eval
 
         # Calculate K_*^T K_inv_R by building the full ((K, K_*), (K_*^T, K_**))
-        K_inv_R_to_mult = jnp.zeros((N_full[0], N_full[1]))
+        K_inv_R_to_mult = jnp.zeros(N_full)
         K_inv_R_to_mult = K_inv_R_to_mult.at[observed_ind].set(K_inv_R)
 
         # mf of conditional GP
         def gp_mean_cond_fn(p_pred, X_full):
-            p_full = stack_params(p_obs, p_pred,
-                                    stack_names_dim1 = stack_p_dim1, sort_fn_dim1 = sort_fn_l,
-                                    stack_names_dim2 = stack_p_dim2, sort_fn_dim2 = sort_fn_t)
+            p_full = stack_params(p_obs, p_pred, stack_names = params_to_stack, sort_fns = sort_fns)
 
             self.kf_eval_full = self.build_kf(p_full, X_full)
             Ks_Kinv_R_term = self.kf_eval_full.matmul(X_full, X_full, K_inv_R_to_mult, wn = False, full = True)
@@ -570,8 +629,7 @@ class GP(object):
             return gp_mean_pred, M_pred
 
         def kf_cond(p_pred, X_full):
-            p_full = stack_params(p_obs, p_pred, stack_names_dim1 = stack_p_dim1, sort_fn_dim1 = sort_fn_l,
-                                    stack_names_dim2 = stack_p_dim2, sort_fn_dim2 = sort_fn_t)
+            p_full = stack_params(p_obs, p_pred, stack_names = params_to_stack, sort_fns = sort_fns)
             
             kf_eval_full = self.build_kf(p_full, X_full)
             return Conditional(kf_eval_full, kf_train = kf_eval_train, X_full = X_full,
@@ -580,11 +638,18 @@ class GP(object):
 
         mf_cond = lambda p_pred, X_full: gp_mean_cond_fn(p_pred, X_full)[0]
         gp_cond = GP(p_pred, X_full, mf = mf_cond, kf = kf_cond)
-        gp_cond.data_shape = (X_pred[0].shape[-1], X_pred[1].shape[-1])
+        gp_cond.data_shape = calc_data_shape(X_pred)
 
         gp_mean_pred, M_pred = gp_mean_cond_fn(p_pred, X_full)
-        
-        return gp_mean_pred, M_pred, gp_cond
+
+        if return_pred_err:
+            # Currently only estimates diagonal of predicted covariance stochastically
+            # Default is samples = 1000 which may be expensive for large models
+            # Relative error in estimate is 1/sqrt(samples): 1000 samples -> ~3.2% error in estimate
+            pred_err = jnp.sqrt(gp_cond.get_diagonal(p_pred, samples = samples))
+            return gp_mean_pred, pred_err, M_pred, gp_cond
+        else:
+            return gp_mean_pred, M_pred, gp_cond
         
 
     def gp_mean_calc(

@@ -197,6 +197,7 @@ class LuasKernelND(CovType):
         
         return R_prime
 
+
     def matmul(self, X1, X2, R, **kwargs):
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
