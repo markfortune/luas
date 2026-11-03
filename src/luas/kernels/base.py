@@ -1,6 +1,4 @@
 import jax.numpy as jnp
-import numpy as np
-import jax
 from jax import vmap
 from jax.scipy.special import gammaln
 from typing import Callable
@@ -17,10 +15,13 @@ __all__ = [
     "SquaredExp",
     "Matern32",
     "Matern52",
+    "MaternHalfInt",
     "RationalQuadratic",
     "ExpSineSquared",
     "Cosine",
     "PoweredExp",
+    "Fixed",
+    "Custom",
 ]
 
 from luas.kernels.diagonal import KroneckerDelta, Noise
@@ -86,33 +87,6 @@ def distanceL2Sq(x: JAXArray, y: JAXArray, scale: Scalar) -> JAXArray:
     
     return jnp.sum(jnp.square(x - y)/scale**2)
     
-    
-def SquaredExp(scale: Scalar, sigma: Scalar = 1., axes: JAXArray | None = None) -> JAXArray:
-    r"""Squared exponential (RBF) kernel.
-
-    .. math::
-
-        k(x,y)=\sigma^2\exp\left(-\frac{\|x-y\|^2}{2\,\mathrm{scale}^2}\right)
-
-    Args:
-        scale (Scalar): Length scale :math:`L`.
-        sigma (Scalar, optional): Kernel amplitude.
-        axes (JAXArray | None, optional): Optional axes selector forwarded internally.
-
-    Returns:
-        JAXArray: A ``covtype.General`` covariance object.
-    """
-    
-    return covtype.General(lambda hp, x, y, **kwargs: sigma**2 * evaluate_kernel(squared_exp_calc, x, y, scale))
-ExpSquared = SquaredExp
-    
-def squared_exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
-    """Function used by ``luas.kernels.squared_exp`` to evaluate the squared exponential kernel function. 
-    
-    """
-
-    tau_sq = distanceL2Sq(x, y, L)
-    return jnp.exp(-0.5 * tau_sq.sum())
 
 
 def Exp(scale: Scalar, sigma: Scalar = 1.) -> JAXArray:
@@ -140,95 +114,33 @@ def exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
     delta_t = distanceL1(x, y, L).sum()
     return jnp.exp(-delta_t)
 
-def Custom(kf: Callable, hp: PyTree, params = None, kf_args = (), kf_kwargs = {}) -> JAXArray:
-    r"""Wrap a user-provided kernel callable into a ``covtype.General`` object.
+    
+def SquaredExp(scale: Scalar, sigma: Scalar = 1., axes: JAXArray | None = None) -> JAXArray:
+    r"""Squared exponential (RBF) kernel.
+
+    .. math::
+
+        k(x,y)=\sigma^2\exp\left(-\frac{\|x-y\|^2}{2\,\mathrm{scale}^2}\right)
 
     Args:
-        kf (Callable): Kernel callable with signature compatible with
-            ``kf(hp, x1, x2, *kf_args, **kf_kwargs, **kwargs)``.
-        hp (PyTree): Hyperparameter pytree passed to ``kf``.
-        params: Optional parameter metadata forwarded to ``covtype.General``.
-        kf_args (tuple, optional): Positional args forwarded to ``kf``.
-        kf_kwargs (dict, optional): Keyword args forwarded to ``kf``.
-
-    Returns:
-        JAXArray: A ``covtype.General`` covariance object.
-    """
-    custom_kf = lambda _, x1, x2, full = True, row_idx = None, col_idx = None, **kwargs: kf(hp, x1, x2,
-                                                                                            *kf_args, **kf_kwargs,
-                                                                                            **kwargs)
-    return covtype.General(custom_kf, params = params)
-
-
-def Fixed(cov_mat: JAXArray, params = None, ignore_idx = False, sigma: Scalar = 1.) -> JAXArray:
-
-    def kf(hp, x1, x2, full = True, row_idx = None, col_idx = None, **kwargs):
-
-        if not full and not ignore_idx:
-            return sigma**2 * cov_mat[jnp.ix_(row_idx, col_idx)]
-        else:
-            return sigma**2 * cov_mat
-        
-    return covtype.General(kf, params = params)
-
-
-def PoweredExp(scale: Scalar, k: Scalar, sigma: Scalar = 1.) -> JAXArray:
-    r"""Powered exponential kernel factory.
-
-    Args:
-        scale (Scalar): Length scale.
-        k (Scalar): Exponent parameter.
+        scale (Scalar): Length scale :math:`L`.
         sigma (Scalar, optional): Kernel amplitude.
+        axes (JAXArray | None, optional): Optional axes selector forwarded internally.
 
     Returns:
         JAXArray: A ``covtype.General`` covariance object.
     """
-
-    return covtype.General(lambda hp, x, y, **kwargs: sigma**2 * evaluate_kernel(powered_exp_calc, x, y, scale, k))
     
+    return covtype.General(lambda hp, x, y, **kwargs: sigma**2 * evaluate_kernel(squared_exp_calc, x, y, scale))
+ExpSquared = SquaredExp
     
-def powered_exp_calc(x: JAXArray, y: JAXArray, L: Scalar, k: Scalar) -> JAXArray:
-    """Function used by powered_exp to evaluate the powered exponential kernel function. 
+def squared_exp_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
+    """Function used by ``luas.kernels.squared_exp`` to evaluate the squared exponential kernel function. 
+    
     """
 
-    d = distanceL1(x, y, L)
-    zero_dist = d == 0.0
-    d_safe = jnp.where(zero_dist, 1.0, d) # avoid numerically unstable gradients at 0^k
-    val = jnp.exp(-d_safe ** k)
-    return jnp.where(zero_dist, 1.0, val) 
-
-
-def Linear(alpha: JAXArray, sigma: Scalar = 1.) -> JAXArray:
-    r"""Linear kernel represented as an outer-product covariance component.
-
-    This returns a ``covtype.Outer`` object parameterized by ``sigma * alpha``.
-    It is useful when building separable or low-rank covariance terms.
-
-    Args:
-        alpha (JAXArray): Feature/basis vector used to construct the outer product.
-        sigma (Scalar, optional): Overall amplitude scale.
-
-    Returns:
-        JAXArray: A ``covtype.Outer`` covariance object.
-    """
-    
-    return covtype.Outer(alpha = sigma * alpha)
-
-
-def Constant(sigma: JAXArray) -> JAXArray:
-    r"""Constant covariance term represented as an outer-product component.
-
-    This returns a ``covtype.Outer`` object with amplitude equivalent to a
-    constant covariance level.
-
-    Args:
-        sigma (JAXArray): Constant standard deviation.
-
-    Returns:
-        JAXArray: A ``covtype.Outer`` covariance object.
-    """
-    
-    return covtype.Outer(alpha = sigma)
+    tau_sq = distanceL2Sq(x, y, L)
+    return jnp.exp(-0.5 * tau_sq.sum())
 
 
 def Matern32(scale: Scalar, sigma: Scalar = 1.) -> JAXArray:
@@ -407,3 +319,94 @@ def cosine_calc(x: JAXArray, y: JAXArray, period: Scalar) -> JAXArray:
     delta_t = distanceL1(x, y, period).sum()
     return jnp.cos(2*jnp.pi*delta_t)
 
+
+def PoweredExp(scale: Scalar, k: Scalar, sigma: Scalar = 1.) -> JAXArray:
+    r"""Powered exponential kernel factory.
+
+    Args:
+        scale (Scalar): Length scale.
+        k (Scalar): Exponent parameter.
+        sigma (Scalar, optional): Kernel amplitude.
+
+    Returns:
+        JAXArray: A ``covtype.General`` covariance object.
+    """
+
+    return covtype.General(lambda hp, x, y, **kwargs: sigma**2 * evaluate_kernel(powered_exp_calc, x, y, scale, k))
+    
+    
+def powered_exp_calc(x: JAXArray, y: JAXArray, L: Scalar, k: Scalar) -> JAXArray:
+    """Function used by powered_exp to evaluate the powered exponential kernel function. 
+    """
+
+    d = distanceL1(x, y, L)
+    zero_dist = d == 0.0
+    d_safe = jnp.where(zero_dist, 1.0, d) # avoid numerically unstable gradients at 0^k
+    val = jnp.exp(-d_safe ** k)
+    return jnp.where(zero_dist, 1.0, val) 
+
+
+
+def Constant(sigma: JAXArray) -> JAXArray:
+    r"""Constant covariance term represented as an outer-product component.
+
+    This returns a ``covtype.Outer`` object with amplitude equivalent to a
+    constant covariance level.
+
+    Args:
+        sigma (JAXArray): Constant standard deviation.
+
+    Returns:
+        JAXArray: A ``covtype.Outer`` covariance object.
+    """
+    
+    return covtype.Outer(alpha = sigma)
+
+
+def Amplitude(alpha: JAXArray, sigma: Scalar = 1.) -> JAXArray:
+    r"""Rank-1 covariance matrix represented as an outer-product sigma^2 * (alpha @ alpha^T)
+
+    This returns a ``covtype.Outer`` object parameterized by ``sigma * alpha``.
+    It is useful when building separable or low-rank covariance terms.
+
+    Args:
+        alpha (JAXArray): Feature/basis vector used to construct the outer product.
+        sigma (Scalar, optional): Overall amplitude scale.
+
+    Returns:
+        JAXArray: A ``covtype.Outer`` covariance object.
+    """
+    
+    return covtype.Outer(alpha = sigma * alpha)
+
+
+def Custom(kf: Callable, hp: PyTree, params = None, kf_args = (), kf_kwargs = {}) -> JAXArray:
+    r"""Wrap a user-provided kernel callable into a ``covtype.General`` object.
+
+    Args:
+        kf (Callable): Kernel callable with signature compatible with
+            ``kf(hp, x1, x2, *kf_args, **kf_kwargs, **kwargs)``.
+        hp (PyTree): Hyperparameter pytree passed to ``kf``.
+        params: Optional parameter metadata forwarded to ``covtype.General``.
+        kf_args (tuple, optional): Positional args forwarded to ``kf``.
+        kf_kwargs (dict, optional): Keyword args forwarded to ``kf``.
+
+    Returns:
+        JAXArray: A ``covtype.General`` covariance object.
+    """
+    custom_kf = lambda _, x1, x2, full = True, row_idx = None, col_idx = None, **kwargs: kf(hp, x1, x2,
+                                                                                            *kf_args, **kf_kwargs,
+                                                                                            **kwargs)
+    return covtype.General(custom_kf, params = params)
+
+
+def Fixed(cov_mat: JAXArray, params = None, ignore_idx = False, sigma: Scalar = 1.) -> JAXArray:
+
+    def kf(hp, x1, x2, full = True, row_idx = None, col_idx = None, **kwargs):
+
+        if not full and not ignore_idx:
+            return sigma**2 * cov_mat[jnp.ix_(row_idx, col_idx)]
+        else:
+            return sigma**2 * cov_mat
+        
+    return covtype.General(kf, params = params)

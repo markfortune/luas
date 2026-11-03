@@ -57,11 +57,11 @@ def Constant(sigma: JAXArray) -> JAXArray:
     return covtype.Outer(alpha = sigma)
 
 
-def Linear(alpha: JAXArray, sigma: Scalar = 1., use_block: bool = True, const: None = None) -> JAXArray:
-    r"""Linear covariance component.
+def Amplitude(alpha: JAXArray, sigma: Scalar = 1., use_block: bool = True, const: None = None) -> JAXArray:
+    r"""Rank-1 covariance component.
 
     If ``const`` is provided, returns a quasisep-plus-noise representation using
-    a tinygp linear kernel; otherwise returns an outer-product form.
+    a tinygp Amplitude kernel; otherwise returns an outer-product form.
 
     Args:
         alpha (JAXArray): 1D coefficient vector for the linear term.
@@ -75,7 +75,7 @@ def Linear(alpha: JAXArray, sigma: Scalar = 1., use_block: bool = True, const: N
     assert alpha.ndim == 1
 
     if const is not None:
-        tinygp_kf = luas.kernels.tinygp_ext.Linear(alpha = sigma * alpha, const = const)
+        tinygp_kf = luas.kernels.tinygp_ext.Amplitude(alpha = sigma * alpha, const = const)
         return covtype.GeneralQuasisepPlusNoise(tinygp_kf, use_block = use_block)
     else:
         return covtype.Outer(alpha * sigma)
@@ -248,13 +248,3 @@ def SquaredExpApprox(scale: Scalar, sigma: Scalar = 1., order: int = 6, use_bloc
     kf_tinygp = luas.kernels.tinygp_ext.SquaredExpApprox(scale=scale, sigma=sigma, order=order,
                                                          use_block = use_block)
     return covtype.GeneralQuasisep(HandleIdx(kf_tinygp))
-
-# def SquaredExpApprox2(scale: Scalar, sigma: Scalar = 1.0, order: int = 6, use_block = True) -> JAXArray:
-#     """Taylor-spectrum squared-exponential approximation as a quasisep kernel.
-
-#     This returns a ``covtype.GeneralQuasisep`` wrapper so it plugs straight into
-#     existing ``luas`` covariance composition patterns.
-#     """
-#     kf_tinygp = luas.kernels.tinygp_ext.SquaredExpApprox2(scale=scale, sigma=sigma, order=order,
-#                                                          use_block = use_block)
-#     return covtype.GeneralQuasisep(HandleIdx(kf_tinygp))

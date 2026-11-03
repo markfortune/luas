@@ -1,19 +1,12 @@
 import numpy as np
-from copy import deepcopy
-from tqdm import tqdm
 from typing import Optional, Callable, Tuple, Any, Union
-from math import prod
 
-import jax
-from jax import grad, value_and_grad, hessian, vmap
 import jax.numpy as jnp
 import jax.scipy.linalg as JLA
-from jax.flatten_util import ravel_pytree
 
 from luas.kernels.covtype import CovType, General
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar
-from luas.kronecker_fns import make_vec, make_mat, kron_prod, tensor_mult
-from luas.jax_convenience_fns import array_to_pytree_2D
+from luas.kronecker_fns import tensor_mult
 
 __all__ = ["GeneralKernel"]
 

@@ -1,19 +1,10 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import jax.numpy as jnp
-import jax
-from jax import grad, value_and_grad, hessian, vmap, custom_jvp, jit, lax
-from jax.flatten_util import ravel_pytree
-from copy import deepcopy
-from tqdm import tqdm
 from typing import Callable, Tuple, Union, Any, Optional
-from functools import partial
 
-from luas.kernels.covtype import CovType, Outer, Identity, ScaledIdentity, Diagonal
+from luas.kernels.covtype import CovType, Outer, Identity, Diagonal
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar
-from luas.kronecker_fns import kron_prod, calc_total_size, cyclic_transpose, vmap_for_tensors, tensor_mult
-from luas.jax_convenience_fns import array_to_pytree_2D, get_corr_mat
-from luas.kernels.WhiteNoiseKernel import WhiteNoiseKernel
+from luas.kronecker_fns import calc_total_size, cyclic_transpose, vmap_for_tensors, tensor_mult
 from luas.kernels.SeparableKernel import SeparableKernel
 from luas.kernels.BlockKernel import Block2x2Kernel, BlockKernel
 

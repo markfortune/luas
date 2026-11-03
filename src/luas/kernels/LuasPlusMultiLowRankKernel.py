@@ -1,5 +1,4 @@
 import jax.numpy as jnp
-import jax
 from typing import Callable, Tuple, Union, Any, Optional
 
 from luas.kernels.covtype import Outer, Exp, GeneralQuasisep, CovType, Identity, ScaledIdentity, Diagonal, General

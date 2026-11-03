@@ -8,24 +8,20 @@ from luas.kernels.covtype import Outer, General, CovType
 from luas.kernels.householder import HouseholderProduct
 import luas.kernels.tinygp_ext
 from luas.stable_gradients import stable_eigh
-from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import shared_memory
 
 from luas.kernels.diagonal import KroneckerDelta, Noise
 
 
 class LowRank(General):
-    def __init__(self, kf, hp = {}, V = None, rank = None, params = None, use_shared_memory = True):
+    def __init__(self, kf, hp = {}, V = None, rank = None, params = None):
         self.kf = kf
         self.hp = hp
         self.fixed_rank = rank
         self.params = params
-        self.use_shared_memory = use_shared_memory
         self.V = V
 
         if rank is None:
             raise Exception("Must specify rank of LowRank term")
-
 
     def eigendecomp(self, x, wn = True, full = True, idx = None, **kwargs):
         if self.V is not None:
@@ -99,6 +95,44 @@ class LowRank(General):
 
 
 
+def Constant(sigma: JAXArray, **kwargs) -> JAXArray:
+    r"""Low-rank constant covariance term.
+
+    Args:
+        sigma (JAXArray): Constant standard deviation amplitude.
+
+    Returns:
+        JAXArray: ``Outer`` covariance component.
+    """
+    
+    return Outer(alpha = sigma)
+
+
+def Amplitude(alpha: JAXArray, **kwargs) -> JAXArray:
+    r"""Low-rank linear covariance term.
+
+    Args:
+        alpha (JAXArray): Coefficient vector defining the outer-product term.
+
+    Returns:
+        JAXArray: ``Outer`` covariance component.
+    """
+    
+    return Outer(alpha = alpha)
+
+
+def MixingMat(V: JAXArray, **kwargs) -> JAXArray:
+    r"""Low-rank linear covariance term.
+
+    Args:
+        alpha (JAXArray): Coefficient vector defining the outer-product term.
+
+    Returns:
+        JAXArray: ``Outer`` covariance component.
+    """
+    return LowRank(lambda hp, x, y, **kwargs: V @ V.T, rank = V.shape[1], V = V, **kwargs)
+
+
 def SquaredExp(scale: Scalar, axes: JAXArray | None = None, rank = None, **kwargs) -> JAXArray:
     r"""Low-rank squared-exponential (RBF) kernel factory.
 
@@ -136,45 +170,6 @@ def Cosine(period: Scalar, **kwargs) -> JAXArray:
     """
 
     return LowRank(lambda hp, x, y, **kwargs: evaluate_kernel(cosine_calc, x, y, period), rank = 2, **kwargs)
-
-
-def MixingMat(V: JAXArray, **kwargs) -> JAXArray:
-    r"""Low-rank linear covariance term.
-
-    Args:
-        alpha (JAXArray): Coefficient vector defining the outer-product term.
-
-    Returns:
-        JAXArray: ``Outer`` covariance component.
-    """
-    return LowRank(lambda hp, x, y, **kwargs: V @ V.T, rank = V.shape[1], V = V, **kwargs)
-
-
-
-def Amplitude(alpha: JAXArray, **kwargs) -> JAXArray:
-    r"""Low-rank linear covariance term.
-
-    Args:
-        alpha (JAXArray): Coefficient vector defining the outer-product term.
-
-    Returns:
-        JAXArray: ``Outer`` covariance component.
-    """
-    
-    return Outer(alpha = alpha)
-
-
-def Constant(sigma: JAXArray, **kwargs) -> JAXArray:
-    r"""Low-rank constant covariance term.
-
-    Args:
-        sigma (JAXArray): Constant standard deviation amplitude.
-
-    Returns:
-        JAXArray: ``Outer`` covariance component.
-    """
-    
-    return Outer(alpha = sigma)
 
 
 def ExpSineSquaredApprox(gamma: Scalar, period: Scalar, order: int, sigma: Scalar = 1., **kwargs):

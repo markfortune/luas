@@ -1,20 +1,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from copy import deepcopy
-from functools import partial
 import jax
-from jax import jit
 import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
-from jax.scipy.special import gammaln
 from typing import Any, Optional, Callable, Union, Dict, Tuple
 
 from luas.kernel_selector import kernel_selector
 from luas.kernels.covtype import CovType
-from luas.kernels.ConditionalKernel import ConditionalKernel
+from luas.kernels.Conditional import Conditional
 from luas.luas_types import Scalar, PyTree, JAXArray, Kernel
 from luas.kronecker_fns import calc_data_shape
-from luas.jax_convenience_fns import (
+from luas.convenience_fns import (
     array_to_pytree_2D,
     pytree_to_array_2D,
     order_list,
@@ -24,6 +20,10 @@ from luas.jax_convenience_fns import (
     varying_params_wrapper,
     get_corr_mat,
     check_params_in_bounds,
+    bin_data_2D,
+    interp_params,
+    stack_params,
+    stack_obs_and_pred_points,
 )
 
 __all__ = ["GP"]
@@ -173,7 +173,10 @@ class GP(object):
         self.kf_eval = self.build_kf(p, self.x)
         self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
 
-        z = np.random.normal(size = self.data_shape)
+        # The Conditional CovType has a non-square matrix square root
+        # which expects a random normal vector of a different shape to the output data
+        z_shape = getattr(self.kf_eval, "sqrt_input_shape", self.data_shape)
+        z = np.random.normal(size = z_shape)
         R = self.kf_eval.matrix_sqrt(z)
 
         if add_mf:
@@ -244,6 +247,7 @@ class GP(object):
 
 
     def optimise(self, p_init, Y, param_bounds = {}, vars = None, fixed_vars = None, maxeval = 5000, include_transformed = False, **kwargs):
+        # Lazy import to avoid PyMC being a dependency unless needed
         import pymc as pm
 
         pymc_model, var_dict, p_pymc = self.pymc_model(p_init, Y, param_bounds = param_bounds, vars = vars, fixed_vars = fixed_vars)
@@ -380,15 +384,13 @@ class GP(object):
         return logP, stored_values
 
     
-    def crossval(self, p, X, Y,
+    def crossval(self, p, Y,
                  train_l = None, train_t = None,
                  stack_p_dim1 = [], stack_p_dim2 = [],
                  return_predicted_loc = False,
                  **kwargs):
 
-        x_l, x_t = X
-
-        Y_full = Y.copy()
+        x_l, x_t = self.x
     
         p_obs = deepcopy(p)
         p_pred = deepcopy(p)
@@ -397,8 +399,6 @@ class GP(object):
             raise Exception("Both train_l and train_t cannot be None!")
     
         if train_l is not None:
-            ind_l = jnp.arange(x_l.shape[-1])[train_l]
-
             x_l_pred = x_l[..., ~train_l]
             x_l = x_l[..., train_l]
             Y = Y[train_l, :]
@@ -408,11 +408,8 @@ class GP(object):
                 p_obs[par] = p_obs[par][train_l]
         else:
             x_l_pred = None
-            ind_l = jnp.arange(x_l.shape[-1])
     
         if train_t is not None:
-            ind_t = jnp.arange(x_t.shape[-1])[train_t]
-
             x_t_pred = x_t[..., ~train_t]
             x_t = x_t[..., train_t]
             Y = Y[:, train_t]
@@ -422,33 +419,17 @@ class GP(object):
                 p_obs[par] = p_obs[par][train_t]
         else:
             x_t_pred = None
-            ind_t = jnp.arange(x_t.shape[-1])
     
-        gp_mean_pred, M_pred, K_pred_inv_fn = self.predict(
-            p_obs, (x_l, x_t), Y,
+        gp_mean_pred, M_pred, gp_cond_obj = self.predict(
+            p_obs, Y,
             p_pred = p_pred,
-            x_l_pred = x_l_pred, x_t_pred = x_t_pred,
+            X_obs = (x_l, x_t),
+            X_pred = (x_l_pred, x_t_pred),
             stack_p_dim1 = stack_p_dim1, stack_p_dim2 = stack_p_dim2,
             return_predicted_loc = return_predicted_loc,
-            sample = False, return_K_pred_inv = True,
             **kwargs,
         )
-        return gp_mean_pred, M_pred, K_pred_inv_fn
-        # observed_ind = jnp.ix_(ind_l, ind_t)
-
-        # gp_mean_pred = gp_mean_pred.at[observed_ind].set(Y_full[observed_ind])
-
-        # mf_res = Y_full - M_pred
-        # pred_err = Y_full - gp_mean_pred
-
-        # mf_res = mf_res.at[observed_ind].set(0.)
-        # pred_err = pred_err.at[observed_ind].set(0.)
-
-        # K_pred_inv_err = K_pred_inv_fn(pred_err)
-        # chi2_pred = (pred_err*K_pred_inv_err).sum()
-        # chi2_reduced_pred = chi2_pred/(pred_err != 0).sum()
-        
-        # return gp_mean_pred, pred_err, chi2_reduced_pred, mf_res
+        return gp_mean_pred, M_pred, gp_cond_obj
     
     
     
@@ -460,8 +441,7 @@ class GP(object):
                 interp_row_l = None, interp_row_t = None,
                 stack_p_dim1 = [], stack_p_dim2 = [], 
                 sort_l = True, sort_t = True,
-                fast_dim = None, return_predicted_loc = True,
-                sample = False):
+                fast_dim = None, return_predicted_loc = True):
     
         r"""Performs GP regression and computes the GP predictive mean and the GP predictive
         uncertainty as the standard devation at each location or else can return the full
@@ -527,23 +507,23 @@ class GP(object):
     
         # Stack observed and predicted locations together for each dimension
         # Works out location of predicted and observed locations within array
-        # Will sort the total stacked regression variables if requested, necessary for celerite dimensions
-        x_l_total, X_pred[0], obs_points_l, pred_points_l, sort_fn_l = stack_obs_and_pred_points(X_obs[0], X_pred[0], sort = sort_l)
-        x_t_total, X_pred[1], obs_points_t, pred_points_t, sort_fn_t = stack_obs_and_pred_points(X_obs[1], X_pred[1], sort = sort_t)
+        # Will sort the full stacked regression variables if requested, necessary for celerite dimensions
+        x_l_full, X_pred[0], obs_points_l, pred_points_l, sort_fn_l = stack_obs_and_pred_points(X_obs[0], X_pred[0], sort = sort_l)
+        x_t_full, X_pred[1], obs_points_t, pred_points_t, sort_fn_t = stack_obs_and_pred_points(X_obs[1], X_pred[1], sort = sort_t)
 
-        X_total = (x_l_total, x_t_total)
-        N_total = (X_total[0].shape[-1], X_total[1].shape[-1])
+        X_full = (x_l_full, x_t_full)
+        N_full = (X_full[0].shape[-1], X_full[1].shape[-1])
         
-        observed_ind = jnp.ix_(jnp.arange(N_total[0])[obs_points_l],
-                               jnp.arange(N_total[1])[obs_points_t])
+        observed_ind = jnp.ix_(jnp.arange(N_full[0])[obs_points_l],
+                               jnp.arange(N_full[1])[obs_points_t])
     
         if return_predicted_loc:
             # Will only output locations at grid inputs of (X_pred)
-            predicted_ind = jnp.ix_(jnp.arange(N_total[0])[pred_points_l],
-                                    jnp.arange(N_total[1])[pred_points_t])
+            predicted_ind = jnp.ix_(jnp.arange(N_full[0])[pred_points_l],
+                                    jnp.arange(N_full[1])[pred_points_t])
         else:
-            # Returns the full output locations at X_total
-            predicted_ind = jnp.ix_(jnp.arange(N_total[0]), jnp.arange(N_total[1]))
+            # Returns the full output locations at X_full
+            predicted_ind = jnp.ix_(jnp.arange(N_full[0]), jnp.arange(N_full[1]))
         
         p_pred = interp_params(p_obs, p_pred, X_obs[0], X_pred[0],
                                interp_param = interp_params_dim1,
@@ -552,7 +532,6 @@ class GP(object):
                                interp_param = interp_params_dim2,
                                interp_row = interp_row_t)
     
-        
         # GP mean calculation
         # Calculate mean function at observed locations
         M_obs = self.mf(p_obs, X_obs)
@@ -564,45 +543,49 @@ class GP(object):
         K_inv_R = self.kf_eval.inverse(R)
         logdet_K_train = stored_values["logdet"]
 
+        # Keep the decomposed training kernel, the conditional covariance needs K^-1
+        kf_eval_train = self.kf_eval
+
         # Calculate K_*^T K_inv_R by building the full ((K, K_*), (K_*^T, K_**))
-        K_inv_R_to_mult = jnp.zeros((N_total[0], N_total[1]))
+        K_inv_R_to_mult = jnp.zeros((N_full[0], N_full[1]))
         K_inv_R_to_mult = K_inv_R_to_mult.at[observed_ind].set(K_inv_R)
 
         # mf of conditional GP
-        def gp_mean_cond_fn(p_pred, X_total):
-            p_total = stack_params(p_obs, p_pred,
+        def gp_mean_cond_fn(p_pred, X_full):
+            p_full = stack_params(p_obs, p_pred,
                                     stack_names_dim1 = stack_p_dim1, sort_fn_dim1 = sort_fn_l,
                                     stack_names_dim2 = stack_p_dim2, sort_fn_dim2 = sort_fn_t)
 
-            self.kf_eval_total = self.build_kf(p_total, X_total)
-            Ks_Kinv_R_term = self.kf_eval_total.matmul(X_total, X_total, K_inv_R_to_mult, wn = False, full = True)
+            self.kf_eval_full = self.build_kf(p_full, X_full)
+            Ks_Kinv_R_term = self.kf_eval_full.matmul(X_full, X_full, K_inv_R_to_mult, wn = False, full = True)
 
             if pred_loc_equals_obs:
                 M_pred = M_obs.copy()
             elif return_predicted_loc:
-                M_pred = self.mf(p_pred, X_total)[predicted_ind]
+                M_pred = self.mf(p_full, X_full)[predicted_ind]
             else:
-                M_pred = self.mf(p_total, X_total)
+                M_pred = self.mf(p_full, X_full)
 
             gp_mean_pred = M_pred + Ks_Kinv_R_term[predicted_ind]
             return gp_mean_pred, M_pred
 
-        def kf_cond(p_pred, X_total):
-            p_total = stack_params(p_obs, p_pred, stack_names_dim1 = stack_p_dim1, sort_fn_dim1 = sort_fn_l,
+        def kf_cond(p_pred, X_full):
+            p_full = stack_params(p_obs, p_pred, stack_names_dim1 = stack_p_dim1, sort_fn_dim1 = sort_fn_l,
                                     stack_names_dim2 = stack_p_dim2, sort_fn_dim2 = sort_fn_t)
             
-            kf_eval_total = self.build_kf(p_total, X_total)
-            return ConditionalKernel(kf_eval_total, N_total = N_total, predicted_ind = predicted_ind, logdet_K_train = logdet_K_train)
+            kf_eval_full = self.build_kf(p_full, X_full)
+            return Conditional(kf_eval_full, kf_train = kf_eval_train, X_full = X_full,
+                                     observed_ind = observed_ind, predicted_ind = predicted_ind,
+                                     logdet_K_train = logdet_K_train)
 
-        mf_cond = lambda p_pred, X_total: gp_mean_cond_fn(p_pred, X_total)[0]
-        gp_cond = GP(p_pred, X_total, mf = mf_cond, kf = kf_cond)
+        mf_cond = lambda p_pred, X_full: gp_mean_cond_fn(p_pred, X_full)[0]
+        gp_cond = GP(p_pred, X_full, mf = mf_cond, kf = kf_cond)
         gp_cond.data_shape = (X_pred[0].shape[-1], X_pred[1].shape[-1])
 
-        gp_mean_pred, M_pred = gp_mean_cond_fn(p_pred, X_total)
+        gp_mean_pred, M_pred = gp_mean_cond_fn(p_pred, X_full)
         
         return gp_mean_pred, M_pred, gp_cond
         
-
 
     def gp_mean_calc(
             self,
@@ -621,46 +604,6 @@ class GP(object):
             return gp_mean, M
         else:
             return gp_mean
-
-    
-    def sample_conditional(self,
-               p_obs, x_obs,
-               p_total, X_total,
-               observed_ind,
-               stored_values = {}, stored_values_total = {}):
-        # Takes a draw from the predictive covariance matrix
-    
-        # First take a draw from K_pred^-1 (weird but it's just how this optimisation works...)
-        self.kf_eval = self.build_kf(p_obs, x_obs)
-        self.kf_eval_total = self.build_kf(p_total, X_total)
-        K_pred_inv_draw, stored_values_K_full = self.kf_eval_total.K_inv_draw(p_total, X_total,
-                                                                         stored_values_total)
-
-        
-        # Zero out observed value locations as they don't correspond to a draw from K_pred_inv
-        K_pred_inv_draw = K_pred_inv_draw.at[observed_ind].set(0.)
-        
-        # Mult by K_full, calculates [K_s @ K_pred_inv_sqrt @ z, K_ss @ K_pred_inv_sqrt @ z]
-        K_pred_draw = self.kf_eval_total.K_mult_vec(p_total, X_total, K_pred_inv_draw,
-                                            stored_values_total)
-        
-        # Take values corresponding to K_s @ K_pred_inv_sqrt @ z
-        K_s_K_inv_sqrt = K_pred_draw[observed_ind]
-        
-        # Calc K_inv @ K_s @ K_pred_inv_sqrt @ z
-        K_inv_K_s_K_inv_sqrt, stored_values_K = self.kf_eval.solve(p_obs, x_obs,
-                                                              K_s_K_inv_sqrt, stored_values)
-        
-        # Calc K_s.T @ K_inv @ K_s @ K_pred_inv_sqrt @ z
-        final_K_mult = jnp.zeros_like(K_pred_draw)
-        final_K_mult = final_K_mult.at[observed_ind].set(K_inv_K_s_K_inv_sqrt)
-        Ks_Kinv_Ks_term = self.kf_eval_total.K_mult_vec(p_total, X_total,
-                                                final_K_mult, stored_values_total)
-        
-        # Calc (K_ss - K_s.T @ K_inv @ K_s) @ K_pred_inv_sqrt @ z
-        K_pred_draw -= Ks_Kinv_Ks_term
-    
-        return K_pred_draw
 
     
     def laplace_approx(
@@ -1110,6 +1053,54 @@ class GP(object):
             return fig
         elif return_fit:
             return gp_mean, M
+
+    
+    def plot_lightcurves(self, p, Y, sep = None, time_dim = 1, xlabel = r"Time", ylabel = "Values + offset", bin = None,
+                         figsize = (12, 8), sharey = True, **fig_kwargs):
+        """Quick function to visualise light curves and the residuals after subtraction of transit model
+        """
+
+        if self.dim != 2:
+            raise Exception("plot_lightcurves only implemented for 2D data")
+
+        gp_mean, M = self.gp_mean_calc(p, Y, return_mf=True)
+
+        if bin is not None:
+            _, _, Y = bin_data_2D(self.x[0], self.x[1], Y, bin[0], bin[1])
+            _, _, M = bin_data_2D(self.x[0], self.x[1], M, bin[0], bin[1])
+            x_bin0, x_bin1, gp_mean = bin_data_2D(X[0], X[1], gp_mean, bin[0], bin[1])
+            x_t = [x_bin0, x_bin1][time_dim]
+        else:
+            x_t = self.x[time_dim]
+
+        if time_dim == 0:
+            gp_mean = gp_mean.T
+            M = M.T
+            Y = Y.T
+
+        N_l = Y.shape[0]
+
+        if sep is None:
+            sep = 4 * Y.std(1).max()
+        
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize = figsize, sharey = sharey, **fig_kwargs)
+        for i in range(N_l):
+            ax1.plot(x_t, Y[i, :] + np.arange(0, -sep*N_l, -sep)[i], 'o', color = "tab:blue", ms = 2)
+            ax1.plot(x_t, M[i, :] + np.arange(0, -sep*N_l, -sep)[i], '--', color = "tab:orange")
+            ax1.plot(x_t, gp_mean[i, :] + np.arange(0, -sep*N_l, -sep)[i], 'k-', ms = 3)
+
+            ax2.plot(x_t, Y[i, :] - M[i, :] + np.arange(1, 1-sep*N_l, -sep)[i], 'o', color = "tab:blue", ms = 2)
+            ax2.plot(x_t, gp_mean[i, :] - M[i, :] + np.arange(1, 1-sep*N_l, -sep)[i], 'k-')
+
+            ax3.plot(x_t, Y[i, :] - gp_mean[i, :] + np.arange(1, 1-sep*N_l, -sep)[i], 'o', color = "tab:blue", ms = 2)
+            ax3.plot(x_t, np.arange(1, 1-sep*N_l, -sep)[i]*np.ones_like(x_t), 'k-', ms = 3)
+            
+        ax1.set_xlabel(xlabel)
+        ax2.set_xlabel(xlabel)
+        ax3.set_xlabel(xlabel)
+        ax1.set_ylabel(ylabel)
+        plt.tight_layout()
+        return fig
     
     
     def autocorrelate(
@@ -1324,13 +1315,12 @@ class GP(object):
         self,
         p: PyTree,
         R: JAXArray,
-        **kwargs,
     ) -> Scalar:
         
         self.kf_eval = self.build_kf(p, self.x)
         
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
-        K_inv_R = self.kf_eval.inverse(R, **kwargs)
+        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, full = True, stored_values = {})
+        K_inv_R = self.kf_eval.inverse(R)
         
         return K_inv_R
 
@@ -1548,205 +1538,3 @@ class GP(object):
         logP = logPrior + logL_val
         
         return logP, stored_values
-    
-        
-
-def interp_params(p_obs, p_pred, x, x_pred,
-            interp_param = None, interp_row = 0):
-    
-    p_interp = deepcopy(p_pred)
-    
-    if x.ndim > 1:
-        x = x[interp_row, :]
-        x_pred = x_pred[interp_row, :]
-    
-    for par in interp_param:
-        p_interp[par] = jnp.interp(x_pred, x, p_obs[par])
-            
-    return p_interp
-    
-
-def stack_params(p_obs, p_pred,
-                 stack_names_dim1 = [], stack_names_dim2 = [],
-                 sort_fn_dim1 = None, sort_fn_dim2 = None):
-
-    p_stack = deepcopy(p_obs)
-    
-    for par in stack_names_dim1:
-        p_stack[par] = jnp.concatenate([p_obs[par], p_pred[par]])
-
-        if sort_fn_dim1 is not None:
-            p_stack[par] = sort_fn_dim1(p_stack[par])
-
-    for par in stack_names_dim2:
-        p_stack[par] = jnp.concatenate([p_obs[par], p_pred[par]])
-
-        if sort_fn_dim2 is not None:
-            p_stack[par] = sort_fn_dim2(p_stack[par])
-            
-    return p_stack
-
-
-def stack_obs_and_pred_points(x, x_pred, sort = None):
-    
-    N = x.shape[-1]
-    
-    if x_pred is not None:
-        x_total = jnp.concatenate([x, x_pred], axis = -1)
-        obs_points = 1 == jnp.concatenate([jnp.ones(N), jnp.zeros(x_pred.shape[-1])])
-        pred_points = ~obs_points
-    else:
-        x_total = x.copy()
-        x_pred = x.copy()
-        obs_points = 1 == jnp.ones(N)
-        pred_points = 1 == jnp.ones(N)
-
-    
-    # Sort stuff if necessary
-    if sort:
-        sort_ind = x_total.argsort()
-        invert_sort = sort_ind.argsort()
-
-        x_total = x_total[sort_ind]
-        obs_points = obs_points[sort_ind]
-        pred_points = pred_points[sort_ind]
-
-        sort_fn = lambda mat, sort_axis = 0: mat[sort_ind]
-    else:
-        sort_fn = lambda mat, sort_axis = 0: mat
-
-    return x_total, x_pred, obs_points, pred_points, sort_fn
-    
- 
-    # def predict_old(
-    #     self,
-    #     p: PyTree,
-    #     Y: JAXArray,
-    #     x_pred: Optional[JAXArray] = None,
-    #     return_std_dev: Optional[bool] = True,
-    #     **kwargs,
-    # ) -> Tuple[JAXArray, JAXArray, JAXArray]:
-    #     r"""Performs GP regression and computes the GP predictive mean and the GP predictive
-    #         uncertainty as the standard devation at each location or else can return the full
-    #         covariance matrix. Requires the input kernel function(s) to have a ``wn`` keyword
-    #         argument that defines the kernel when white noise is included (``wn = True``) and
-    #         when white noise isn't included (``wn = False``).
-            
-    #         Currently assumes the same input hyperparameters for both the observed and predicted
-    #         locations. The predicted locations ``x_l_pred`` and ``x_t_pred`` may deviate from
-    #         the observed locations ``x_l`` and ``x_t`` however.
-            
-    #         The GP predictive mean is defined as:
-            
-    #         .. math::
-            
-    #             \mathbb{E}[\vec{y}_*] = \vec{\mu}_* + \mathbf{K}_*^T \mathbf{K}^{-1} \vec{r}
-            
-    #         And the GP predictive covariance is given by:
-            
-    #         .. math::
-            
-    #             Var[\vec{y}_*] = \mathbf{K}_{**} - \mathbf{K}_*^T \mathbf{K}^{-1} \mathbf{K}_*
-            
-    #         Args:
-    #             p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-    #                 in addition to any mean function parameters which may be needed to calculate the mean function.
-    #             Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-    #             x_l_pred (JAXArray, optional): Prediction locations along the row dimension,
-    #                 defaults to observed input locations.
-    #             x_t_pred (JAXArray, optional): Prediction locations along the column dimension,
-    #                 defaults to observed input locations.
-    #             return_std_dev (bool, optional): If ``True`` will return the standard deviation ofuncertainty
-    #                 at the predicted locations. Otherwise will return the full predictive covariance matrix.
-    #                 Defaults to ``True``.
-            
-    #         Returns:
-    #             (JAXArray, JAXArray, JAXArray): Returns a tuple of three elements, where the first element is
-    #             the GP predictive mean at the prediction locations, the second element is either the
-    #             standard deviation of the predictions if ``return_std_dev = True``, otherwise it will be
-    #             the full covariance matrix of the predicted values. The third element will be the mean function
-    #             evalulated at the prediction locations.
-            
-    #         """
-        
-    #     # If no prediction locations specified, predict at observed locations
-        
-    #     if x_l_pred is None:
-    #         x_l_pred = self.x_l
-    #     if x_t_pred is None:
-    #         x_t_pred = self.x_t
-
-    #     # Generate mean function and compute residuals
-    #     R = Y - self.mf(p, self.x_l, self.x_t)
-    #     M_pred = self.mf(p, x_l_pred, x_t_pred)
-        
-    #     # Kernel object computes GP regression as the most efficient method depends on the form of
-    #     # the kernel function
-    #     self.kf_eval = self.build_kf(p, self.x)
-    #     gp_mean, pred_err = self.kf_eval.predict(p, self.x_l, x_l_pred, self.x_t, x_t_pred, R, M_pred,
-    #                                         return_std_dev = return_std_dev, **kwargs)
-        
-    #     return gp_mean, pred_err, M_pred
-
-    
-    # def sigma_clip(
-    #     self,
-    #     p: PyTree,
-    #     Y:JAXArray,
-    #     sigma: Scalar,
-    #     plot: Optional[bool] = True,
-    #     use_gp_mean: Optional[bool] = True,
-    # ) -> JAXArray:
-    #     """Performs GP regression and replaces any outliers above a given number of standard deviations
-    #     with the GP predictive mean evaluated at those locations. If ``use_gp_mean = False`` then will instead
-    #     replace outliers with the mean function evaluated at each location.
-        
-    #     Args:
-    #         p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-    #             in addition to any mean function parameters which may be needed to calculate the mean function.
-    #         Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-    #         sigma (Scalar): Significance value in standard deviations above which outliers will be clipped.
-    #         plot (bool, optional): Whether to produce plots which visualise the outliers in the data.
-    #         use_gp_mean (bool, optional): Will replace outliers with values from the GP predictive mean if ``True``,
-    #             otherwise will replace with values from the mean function.
-        
-    #     Returns:
-    #         JAXArray: The observed data with outliers cleaned.
-            
-    #     """
-        
-    #     # First perform the GP regression with the predicted locations defaulting to the observed locations
-    #     gp_mean, sigma_diag, M = self.predict(p, Y)
-        
-    #     # Residuals after subtraction of the GP mean are normalised based on their predicted uncertainties
-    #     res = Y - gp_mean
-    #     Z = jnp.abs(res/sigma_diag)
-        
-    #     # Identify outliers above given significance level
-    #     outliers = Z > sigma
-        
-    #     # Create a copy of the observed data with outliers replaced with the GP predictive mean values
-    #     Y_clean = jnp.array(Y.copy())
-        
-    #     if use_gp_mean:
-    #         Y_clean = Y_clean.at[outliers].set(gp_mean[outliers])
-    #     else:
-    #         Y_clean = Y_clean.at[outliers].set(M[outliers])
-        
-    #     print("Number of outliers clipped = ", (outliers).sum())
-        
-    #     # Some convenient plots to visualise the locations of the outliers
-    #     if plot:
-    #         plt.title("Std. Dev. of Residuals")
-    #         plt.imshow(Z, aspect = 'auto')
-    #         plt.colorbar()
-    #         plt.show()
-            
-    #         if outliers.sum() > 0:
-    #             plt.title("Locations of Outliers Removed")
-    #             plt.imshow(Y, aspect = 'auto')
-    #             y, x = jnp.where(outliers)
-    #             plt.scatter(x, y, color='red', marker='x')
-    #             plt.show()
-
-    #     return Y_clean

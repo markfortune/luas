@@ -1,16 +1,10 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import jax.numpy as jnp
-import jax
-
-from tqdm import tqdm
 from typing import Callable, Tuple, Union, Any, Optional
-from functools import partial
 
 from luas.kernels.covtype import CovType
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar
-from luas.kronecker_fns import kron_prod, calc_total_size, calc_data_shape, cyclic_transpose, tensor_mult, vmap_for_tensors
-from luas.jax_convenience_fns import array_to_pytree_2D, get_corr_mat
+from luas.kronecker_fns import calc_total_size, calc_data_shape, cyclic_transpose, tensor_mult, vmap_for_tensors
 
 __all__ = [
     "SeparableKernel",

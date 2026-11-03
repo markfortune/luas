@@ -255,7 +255,7 @@ class Constant(Quasisep):
 
 
 @tinygp.helpers.dataclass
-class Linear(Quasisep):
+class Amplitude(Quasisep):
     alpha: JAXArray
     const: JAXArray | float = 1.
 
@@ -690,107 +690,3 @@ class GeneralCARMA(Quasisep):
 
         return H
 
-
-
-@tinygp.helpers.dataclass
-class SquaredExpApprox2(Quasisep):
-    scale: JAXArray | float
-    order: int = eqx.field(static=True)
-    _P_inf: JAXArray
-    T: JAXArray
-    T_inv: JAXArray
-    total_kernel: tinygp.kernels.quasisep.Quasisep
-    sigma: JAXArray | float = 1.
-    _F: JAXArray
-    use_block: bool = True
-    
-    def __init__(self, scale, order, sigma = 1, use_block = True):
-        self.scale = scale
-        self.order = order
-        self.sigma = sigma
-        self.use_block = use_block
-
-        assert order % 2 == 0, "Only even orders supported for squared exponential approximation"
-        assert order <= 18, "Modal decompositions only precomputed up to order 18"
-
-        modal_decomp = _get_sq_exp_decomp_arrays(order)
-        self.T = modal_decomp["T_modal"]
-        self.T_inv = modal_decomp["T_modal_inv"]
-        self._F = modal_decomp["F_ref"]
-        self._P_inf = modal_decomp["P_inf_ref"]
-        real_parts = modal_decomp["all_real_parts"]
-        imag_parts = modal_decomp["imag_parts"]
-
-        self.total_kernel = self._build_kernel(real_parts, imag_parts)
-        
-    def _build_kernel(self, real_parts, imag_parts):
-
-        n_real = real_parts.size - imag_parts.size
-        start = True
-        for i in range(real_parts.size):
-            kernel_term = tinygp.kernels.quasisep.Exp(-1/real_parts[i])
-            if i >= n_real:
-                kernel_term *= tinygp.kernels.quasisep.Cosine(2 * jnp.pi/imag_parts[i - n_real])
-
-            if start:
-                total_kernel = kernel_term
-                start = False
-            else:
-                total_kernel = tinygp.kernels.quasisep.Sum(total_kernel, kernel_term, use_block = self.use_block)
-
-        return total_kernel
-
-
-    def to_symm_qsm(self, X):
-
-        a = jax.vmap(self.total_kernel.transition_matrix)(
-            jax.tree_util.tree_map(lambda y: jnp.append(y[0], y[:-1]), X/self.scale), X/self.scale
-        )
-        h = jax.vmap(self.observation_model)(X)
-
-        q = h @ self.T_inv.T
-        p = (h @ self._P_inf) @ self.T
-        d = jnp.sum(p * q, axis=1)
-        
-        p = jax.vmap(lambda x, y: x @ y)(p, a)
-
-        return SymmQSM(diag=DiagQSM(d=d), lower=StrictLowerTriQSM(p=p, q=q, a=a))
-    
-    def to_general_qsm(self, X1, X2):
-        raise Exception("Not implemented!")
-    
-    
-    def stationary_covariance(self):
-
-        powers = jnp.arange(int(self.order), dtype=jnp.result_type(self.scale))
-        scale_diag = self.scale**powers
-
-        P_inf_ref = self._P_inf
-
-        return jnp.diag(1/scale_diag) @ P_inf_ref @ jnp.diag(1/scale_diag)
-
-
-    def design_matrix(self):
-        powers = jnp.arange(int(self.order), dtype=jnp.result_type(self.scale))
-        scale_diag = self.scale**powers
-
-        F_ref = self._F
-
-        return (1/self.scale) * jnp.diag(scale_diag) @ self.T @ F_ref @ self.T_inv @ jnp.diag(1/scale_diag)
-        
-    def transition_matrix(self, X1, X2):
-
-        # F(scale)^T = D @ (F_ref^T / scale) @ D^{-1}, D=diag(scale^k)
-
-        A_ref = self.total_kernel.transition_matrix(X1 / self.scale, X2 / self.scale)
-        powers = jnp.arange(int(self.order), dtype=jnp.result_type(self.scale))
-        d = self.scale**powers
-    
-        return jnp.diag(d) @ self.T @ A_ref @ self.T_inv @ jnp.diag(1/d) 
-    
-    def observation_model(self, X):
-        
-        H = jnp.zeros(self.order)
-        H = H.at[0].set(self.sigma)
-
-        return H

@@ -1,11 +1,8 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import jax
 from copy import deepcopy
-from tqdm import tqdm
 from typing import Callable, Tuple, Union, Any, Optional
-from functools import partial
 
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar
 from luas.kronecker_fns import kron_prod
@@ -570,7 +567,7 @@ class LuasKernel(CovType):
         # Use functions with custom derivatives to accurately calculate the log
         # likelihood, its gradient and hessian
         rKr = r_K_inv_r(R, stored_values)
-        logdet = logdet_calc_hessianable(stored_values)
+        logdet = logdetK_calc_hessianable(stored_values)
         logL =  -0.5 * rKr - 0.5 * logdet  - 0.5 * R.size * jnp.log(2*jnp.pi)
 
         return  logL

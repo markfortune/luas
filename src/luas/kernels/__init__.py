@@ -1,6 +1,4 @@
 from luas.kernels.base import (
-    Custom,
-    Fixed,
     Noise,
     KroneckerDelta,
     Exp,
@@ -13,7 +11,9 @@ from luas.kernels.base import (
     ExpSineSquared,
     Cosine,
     Constant,
-    Linear,
+    Amplitude,
+    Fixed,
+    Custom,
 )
 import luas.kernels.diagonal
 import luas.kernels.quasisep

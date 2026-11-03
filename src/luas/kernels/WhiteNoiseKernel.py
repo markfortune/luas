@@ -1,18 +1,11 @@
 import numpy as np
-from copy import deepcopy
-from tqdm import tqdm
 from typing import Optional, Callable, Tuple, Any, Union
 
-import jax
-from jax import grad, value_and_grad, hessian, vmap
 import jax.numpy as jnp
-import jax.scipy.linalg as JLA
-from jax.flatten_util import ravel_pytree
 
 from luas.kernels.covtype import CovType
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar, is_scalar
 from luas.kronecker_fns import make_vec, make_mat, calc_data_shape
-from luas.jax_convenience_fns import array_to_pytree_2D
 
 __all__ = ["WhiteNoiseKernel"]
 

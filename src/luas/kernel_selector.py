@@ -1,12 +1,3 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from copy import deepcopy
-from typing import Optional, Callable, Tuple, Any, Union
-
-import jax.numpy as jnp
-import jax.scipy.linalg as JLA
-from jax.flatten_util import ravel_pytree
-
 import luas.kernels.covtype as covtype
 from luas.kernels.covtype import CovType, Outer
 from luas.kronecker_fns import calc_data_shape

@@ -205,8 +205,8 @@ class MixingMatQuasisep(CovType):
             u_dot_w = jnp.dot(u, w_i)
             alpha = 2 * u_dot_w * u - w_i
             
-            self.kernel_list[i] += luas.kernels.quasisep.Linear(alpha, const = 1/u_dot_w)
-            self.kernel_list[i] += luas.kernels.quasisep.Linear(w_i, const = -1/u_dot_w)
+            self.kernel_list[i] += luas.kernels.quasisep.Amplitude(alpha, const = 1/u_dot_w)
+            self.kernel_list[i] += luas.kernels.quasisep.Amplitude(w_i, const = -1/u_dot_w)
         
         return MixingMatQuasisep(self.mixing_mat, self.kernel_list, diag = self.diag, wn_diag = self.wn_diag,
                                  fast_dim = self.fast_dim, noise_model = self.noise_model)

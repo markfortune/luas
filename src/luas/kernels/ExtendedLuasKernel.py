@@ -1,9 +1,9 @@
 import jax.numpy as jnp
 import jax
 from typing import Callable, Tuple, Union, Any, Optional
-import matplotlib.pyplot as plt
 
-from luas.kernels.covtype import Outer, Exp, GeneralQuasisep, CovType, Identity, ScaledIdentity, Diagonal, General
+import luas.kernels
+from luas.kernels.covtype import CovType, Identity, Diagonal, Outer
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar, is_scalar
 from luas.kronecker_fns import tensor_mult, vmap_for_tensors, cyclic_transpose
 from luas.kernel_interface import read_K_list_2D
@@ -12,7 +12,6 @@ from luas.kernels.BlockKernel import Block2x2Kernel
 from luas.kernels.GeneralKernel import GeneralKernel
 from luas.kernels.LuasPlusMultiLowRankKernel import LuasPlusMultiLowRankKernel
 from luas.stable_gradients import stable_eigh
-import luas.kernels
 
 __all__ = [
     "ExtendedLuasKernel",

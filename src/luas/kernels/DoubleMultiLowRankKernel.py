@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import jax
 from typing import Callable, Tuple, Union, Any, Optional

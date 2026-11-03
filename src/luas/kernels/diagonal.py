@@ -1,6 +1,5 @@
 import jax.numpy as jnp
 import numpy as np
-from jax import vmap
 from typing import Callable
 from luas.luas_types import JAXArray, Scalar, PyTree, is_scalar
 import luas.kernels.covtype as covtype

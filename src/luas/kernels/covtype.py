@@ -621,8 +621,8 @@ class Diagonal(CovType):
         u_dot_w = jnp.dot(u, w_i)
         alpha = 2 * u_dot_w * u - w_i
 
-        new_tinygp_kf = luas.kernels.tinygp_ext.Linear(alpha = alpha, const = 1/u_dot_w)
-        new_tinygp_kf += luas.kernels.tinygp_ext.Linear(alpha = w_i, const = -1/u_dot_w)
+        new_tinygp_kf = luas.kernels.tinygp_ext.Amplitude(alpha = alpha, const = 1/u_dot_w)
+        new_tinygp_kf += luas.kernels.tinygp_ext.Amplitude(alpha = w_i, const = -1/u_dot_w)
         
         return GeneralQuasisepPlusNoise(new_tinygp_kf, diag = self.diag, wn_diag = self.wn_diag)
 
@@ -793,8 +793,8 @@ class GeneralQuasisepPlusNoise(CovType):
         u_dot_w = jnp.dot(u, w_i)
         alpha = 2 * u_dot_w * u - w_i
 
-        new_tinygp_kf = self.tinygp_kf + luas.kernels.tinygp_ext.Linear(alpha = alpha, const = 1/u_dot_w)
-        new_tinygp_kf += luas.kernels.tinygp_ext.Linear(alpha = w_i, const = -1/u_dot_w)
+        new_tinygp_kf = self.tinygp_kf + luas.kernels.tinygp_ext.Amplitude(alpha = alpha, const = 1/u_dot_w)
+        new_tinygp_kf += luas.kernels.tinygp_ext.Amplitude(alpha = w_i, const = -1/u_dot_w)
         
         return GeneralQuasisepPlusNoise(new_tinygp_kf, diag = self.diag, wn_diag = self.wn_diag,
                                         noise_model = self.noise_model, use_block = self.use_block)
@@ -973,8 +973,8 @@ class GeneralQuasisep(CovType):
         u_dot_w = jnp.dot(u, w_i)
         alpha = 2 * u_dot_w * u - w_i
 
-        new_tinygp_kf = self.tinygp_kf + luas.kernels.tinygp_ext.Linear(alpha = alpha, const = 1/u_dot_w)
-        new_tinygp_kf += luas.kernels.tinygp_ext.Linear(alpha = w_i, const = -1/u_dot_w)
+        new_tinygp_kf = self.tinygp_kf + luas.kernels.tinygp_ext.Amplitude(alpha = alpha, const = 1/u_dot_w)
+        new_tinygp_kf += luas.kernels.tinygp_ext.Amplitude(alpha = w_i, const = -1/u_dot_w)
         
         return GeneralQuasisepPlusNoise(new_tinygp_kf, use_block = self.use_block)
 
@@ -1102,7 +1102,7 @@ class Outer(CovType):
         if is_scalar(alpha):
             self.tinygp_kf = HandleIdx(luas.kernels.tinygp_ext.Constant(const = alpha**2))
         else:
-            self.tinygp_kf = luas.kernels.tinygp_ext.Linear(alpha = alpha)
+            self.tinygp_kf = luas.kernels.tinygp_ext.Amplitude(alpha = alpha)
 
         assert is_scalar(self.alpha_init) or self.alpha_init.ndim == 1
 
@@ -1368,7 +1368,7 @@ class OuterPlusScaledIdentity(CovType):
             if is_scalar(self.alpha_init):
                 outer_kf = luas.kernels.tinygp_ext.Constant(self.alpha_init**2)
             else:
-                outer_kf = luas.kernels.tinygp_ext.Linear(self.alpha_init)
+                outer_kf = luas.kernels.tinygp_ext.Amplitude(self.alpha_init)
 
             if K.tinygp_kf is not None:
                 new_tinygp_kf = luas.kernels.tinygp_ext.Sum(outer_kf, K.tinygp_kf, use_block = K.use_block)
@@ -1390,3 +1390,4 @@ class OuterPlusScaledIdentity(CovType):
             return self.scale(other)
         else:
             raise Exception("Not implemented")
+

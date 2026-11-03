@@ -2,8 +2,7 @@ import jax.numpy as jnp
 import jax
 from typing import Callable, Tuple, Union, Any, Optional
 
-from luas.kernels.covtype import CovType, Identity, ScaledIdentity, Diagonal
-from luas.kronecker_fns import tensor_mult, calc_total_size
+from luas.kernels.covtype import CovType, Diagonal
 
 class BlockKernel(CovType):
     def __init__(

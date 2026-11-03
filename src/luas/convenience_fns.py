@@ -19,6 +19,11 @@ __all__ = [
     "sigmoid",
     "transf_from_unbounded_params",
     "transf_to_unbounded_params",
+    "bin_data_1D",
+    "bin_data_2D",
+    "interp_params",
+    "stack_params",
+    "stack_obs_and_pred_points",
 ]
 
 def get_corr_mat(cov_mat: JAXArray, zero_diag: Optional[bool] = False) -> JAXArray:
@@ -490,3 +495,131 @@ def transf_from_unbounded_params(p_unbounded, param_bounds):
             p_bounded[par] = transf_from_unbounded(p_unbounded[par], param_bounds[par])
 
     return p_bounded
+
+
+def bin_data_1D(t, y, bin_size):
+    N = y.size
+        
+    y_bin = y.copy()
+
+    if bin_size > 1:
+        bin_mat = np.kron(np.eye(N//bin_size), np.ones(bin_size)/bin_size)
+        clip = N % bin_size
+
+        if clip:
+            t_bin = bin_mat @ t[:-clip]
+            y_bin = bin_mat @ y_bin[:-clip]
+        else:
+            t_bin = bin_mat @ t
+            y_bin = bin_mat @ y_bin
+    else:
+        t_bin = t.copy()
+            
+    return t_bin, y_bin
+
+
+def bin_data_2D(x_l, x_t, Y, l_bin, t_bin):
+    N_l = Y.shape[0]
+    N_t = Y.shape[1]
+    
+    Y_bin = Y.copy()
+
+    if t_bin > 1:
+        bin_mat_t = np.kron(np.eye(N_t//t_bin), np.ones(t_bin)/t_bin)
+        clip = N_t%t_bin
+
+        if clip:
+            x_t_bin = bin_mat_t @ x_t[:-clip]
+            Y_bin = (bin_mat_t @ Y_bin[:, :-clip].T).T
+        else:
+            x_t_bin = bin_mat_t @ x_t
+            Y_bin = (bin_mat_t @ Y_bin.T).T
+    else:
+        x_t_bin = x_t.copy()
+
+    if l_bin > 1:
+        bin_mat_l = np.kron(np.eye(N_l//l_bin), np.ones(l_bin)/l_bin)
+        clip = N_l % l_bin
+
+        if clip:
+            x_l_bin = bin_mat_l @ x_l[:-clip]
+            Y_bin = (bin_mat_l @ Y_bin[:-clip, :])
+        else:
+            x_l_bin = bin_mat_l @ x_l
+            Y_bin = (bin_mat_l @ Y_bin)
+    else:
+        x_l_bin = x_l.copy()
+            
+    return x_l_bin, x_t_bin, Y_bin
+
+
+def interp_params(p_obs, p_pred, x, x_pred,
+            interp_param = None, interp_row = 0):
+    
+    p_interp = deepcopy(p_pred)
+    
+    if x.ndim > 1:
+        x = x[interp_row, :]
+        x_pred = x_pred[interp_row, :]
+    
+    for par in interp_param:
+        p_interp[par] = jnp.interp(x_pred, x, p_obs[par])
+            
+    return p_interp
+    
+
+def stack_params(p_obs, p_pred,
+                 stack_names_dim1 = [], stack_names_dim2 = [],
+                 sort_fn_dim1 = None, sort_fn_dim2 = None):
+
+    p_stack = deepcopy(p_obs)
+    
+    for par in stack_names_dim1:
+        p_stack[par] = jnp.concatenate([p_obs[par], p_pred[par]])
+
+        if sort_fn_dim1 is not None:
+            p_stack[par] = sort_fn_dim1(p_stack[par])
+
+    for par in stack_names_dim2:
+        p_stack[par] = jnp.concatenate([p_obs[par], p_pred[par]])
+
+        if sort_fn_dim2 is not None:
+            p_stack[par] = sort_fn_dim2(p_stack[par])
+            
+    return p_stack
+
+
+def stack_obs_and_pred_points(x, x_pred, sort = None):
+    
+    N = x.shape[-1]
+    
+    if x_pred is not None:
+        x_total = jnp.concatenate([x, x_pred], axis = -1)
+        obs_points = 1 == jnp.concatenate([jnp.ones(N), jnp.zeros(x_pred.shape[-1])])
+        pred_points = ~obs_points
+    else:
+        x_total = x.copy()
+        x_pred = x.copy()
+        obs_points = 1 == jnp.ones(N)
+        pred_points = 1 == jnp.ones(N)
+
+    
+    # Sort stuff if necessary
+    if sort:
+        sort_ind = x_total.argsort()
+        invert_sort = sort_ind.argsort()
+
+        x_total = x_total[sort_ind]
+        obs_points = obs_points[sort_ind]
+        pred_points = pred_points[sort_ind]
+
+        def sort_fn(mat, sort_axis = 0, inverse = False):
+            if inverse:
+                return mat[invert_sort]
+            else:
+                return mat[sort_ind]
+    else:
+        sort_fn = None
+
+    return x_total, x_pred, obs_points, pred_points, sort_fn
+    

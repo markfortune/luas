@@ -1,7 +1,7 @@
 import numpy as np
 import jax
 from jax.flatten_util import ravel_pytree
-from .jax_convenience_fns import order_dict
+from .convenience_fns import order_dict
 import pymc as pm
 from copy import deepcopy
 
