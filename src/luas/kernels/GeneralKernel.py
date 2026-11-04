@@ -83,6 +83,7 @@ class GeneralKernel(CovType):
         dense_mat = None,
         use_stored_values = False,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         # Function used to build the covariance matrix K
         if isinstance(Sigma, CovType) and K_list != ():
             # Case of a single Kronecker term (optimised version is SeparableKernel)
@@ -109,6 +110,21 @@ class GeneralKernel(CovType):
     
     
     def evaluate(self, X1, X2, full = True, idx = None, **kwargs):
+        r"""Builds the full dense covariance matrix by evaluating each Kronecker term and summing them, plus
+        ``dense_mat`` if given.
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns.
+            full (bool, optional): Whether to evaluate the full matrices along each dimension, otherwise the
+                sub-matrices given by ``idx``. Defaults to ``True``.
+            idx (tuple, optional): Row and column indices along each dimension if ``full = False``.
+            **kwargs: Passed to each covariance object's ``evaluate`` method, e.g. ``wn``.
+
+        Returns:
+            JAXArray: The covariance matrix, ordered as the row-major (``"C"``) flattening of the data array.
+
+        """
 
         if idx is None:
             idx = (None,)*self.dim
@@ -136,6 +152,17 @@ class GeneralKernel(CovType):
         stored_values: Optional[PyTree] = {},
         **kwargs,
     ) -> PyTree:
+        r"""Builds the full covariance matrix and calculates its Cholesky decomposition and log determinant.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Not used.
+            **kwargs: Passed to :meth:`evaluate`.
+
+        Returns:
+            (GeneralKernel, dict): Itself and the stored value ``"logdet"``.
+
+        """
         
         # Simply builds the covariance matrix and decomposes it into a Cholesky factor L
         # and precomputes the log determinant of K for log likelihood calculations
@@ -146,6 +173,10 @@ class GeneralKernel(CovType):
         return self, {"logdet":self.logdet}
 
     def matrix_inv_sqrt(self, R, transpose = 0):
+        r"""Multiplies the data-shaped array ``R`` by :math:`\mathbf{L}^{-1}` (or :math:`\mathbf{L}^{-T}`), where
+        :math:`\mathbf{L}` is the Cholesky factor, by flattening ``R`` and solving the triangular system.
+
+        """
         
         R_shape = R.shape
         r = R.ravel("C")
@@ -153,6 +184,7 @@ class GeneralKernel(CovType):
         return r_prime.reshape(R_shape)
 
     def matrix_sqrt(self, R, transpose = 0):
+        r"""Multiplies the data-shaped array ``R`` by the Cholesky factor :math:`\mathbf{L}` (or :math:`\mathbf{L}^T`)."""
         
         R_shape = R.shape
         r = R.ravel("C")
@@ -164,6 +196,10 @@ class GeneralKernel(CovType):
         return r_prime.reshape(R_shape)
     
     def dot_solve(self, R):
+        r"""Calculates :math:`\vec{r}^T \mathbf{K}^{-1} \vec{r}` with the Cholesky factor, as the sum of squares of
+        :math:`\mathbf{L}^{-1}\vec{r}`.
+
+        """
         
         r = R.ravel("C")
         r_prime = JLA.solve_triangular(self.factor, r, lower = True, trans = 0)

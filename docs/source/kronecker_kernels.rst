@@ -1,6 +1,6 @@
 .. _api-kronecker-kernels:
 
-Kronecker Kernels
+Kronecker kernels
 =================
 
 Each of these classes represents the covariance matrix of a whole 2D data set,

@@ -167,9 +167,10 @@ class LuasKernel(CovType):
         be positive semi-definite.
 
     Note:
-        This class still uses the older ``luas`` kernel interface (it subclasses
-        ``luas.luas_types.Kernel`` rather than ``CovType``), and is restricted to
-        exactly two dimensions and a single :math:`\mathbf{K}` term. See
+        This is a legacy implementation. It evaluates the four matrices densely
+        and eigendecomposes them, rather than using each covariance object's own
+        decomposition, and is restricted to exactly two dimensions and a single
+        :math:`\mathbf{K}` term. See
         :class:`luas.LuasKernelND` for more than two dimensions, and
         :class:`luas.LuasPlusMultiLowRankKernel` or :class:`luas.ExtendedLuasKernel`
         for adding further low-rank terms.
@@ -222,6 +223,7 @@ class LuasKernel(CovType):
         use_stored_values: Optional[bool] = True,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         
         self.Kl = lambda x1, x2, full = True, **kwargs: K[0].evaluate(x1, x2, full = full, **kwargs)
         self.Kt = lambda x1, x2, full = True, **kwargs: K[1].evaluate(x1, x2, full = full, **kwargs)

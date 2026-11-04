@@ -53,6 +53,31 @@ def get_corr_mat(cov_mat: JAXArray, zero_diag: Optional[bool] = False) -> JAXArr
 
 
 def check_params_in_bounds(p, param_bounds, bound_tol = 1e-9):
+    """Checks that parameters lie inside their bounds, nudging any which lie exactly on a bound
+    just inside it.
+
+    ``PyMC`` and ``NumPyro`` sample bounded parameters in an unbounded space (see
+    :func:`transf_to_unbounded`), where a value exactly on a bound maps to infinity. Any values which
+    lie on (or within ``bound_tol`` of) a bound are moved inside by ``bound_tol`` with a warning, and a
+    ``ValueError`` is raised for values further outside the bounds.
+
+    Example:
+        ``param_bounds`` should be of the form ``param_bounds[par] = [lower_bound, upper_bound]``,
+        where the bounds are scalars or arrays with the same shape as ``p[par]``.
+
+    Args:
+        p (PyTree): Parameters to check. Parameters without bounds in ``param_bounds`` are not checked.
+        param_bounds (PyTree): Lower and upper bounds for any of the parameters in ``p``.
+        bound_tol (Scalar, optional): How far inside a bound to move values lying on it.
+            Defaults to ``1e-9``.
+
+    Returns:
+        PyTree: A copy of ``p`` with any values lying on a bound moved inside it.
+
+    Raises:
+        ValueError: If any parameter lies outside its bounds by more than ``bound_tol``.
+
+    """
     p_new = deepcopy(p)
 
     # Check if values are all within bounds
@@ -188,10 +213,13 @@ def pytree_to_array_2D(
         p (PyTree): Parameters used for log likelihood calculations, used to describe the order of the array
             according to how ``jax.flatten_util.ravel_pytree`` will flatten into an array.
         pytree_2D (PyTree): A nested PyTree describing a 2D array keyed by the pair of parameters along each row and column.
-        
+        param_order (:obj:`list` of :obj:`str`, optional): The order of the parameters along the rows and
+            columns of the output array. Defaults to the order ``jax.flatten_util.ravel_pytree`` uses.
+
     Returns:
-        JAXArray: A 2D array which the nested PyTree has been sorted into.
-            
+        JAXArray: A 2D array of shape ``(N_par, N_par)`` which the nested PyTree has been sorted into,
+        where ``N_par`` is the total number of parameter values in ``p``.
+
     """
     
     # First must solve for the order in the array to place each parameter into
@@ -322,7 +350,8 @@ def large_hessian_calc(
             where ``p`` is a PyTree.
         p (PyTree): Parameters to calculate the derivative with respect to. All parameters within ``p`` will
             have the derivative be taken with respect to.
-        block_size (int, optional): The number of groups of rows to calculate the second derivatives for at once.
+        *args: Extra positional arguments passed to ``fn``.
+        block_size (int, optional): The number of rows of the hessian to calculate at once.
             Large numbers will have a higher memory cost but may result in a shorter runtime.
             Defaults to 50.
         return_array (bool, optional): Whether to return the hessian as an array of shape ``(N_{par}, N_{par})``
@@ -331,7 +360,8 @@ def large_hessian_calc(
             Defaults to True.
         jit (bool, optional): Whether to JIT compile the hessian function, can speed up the calculation assuming
             the function can be JIT compiled. Defaults to ``True``.
-            
+        **kwargs: Extra keyword arguments passed to ``fn``.
+
     Returns:
         JAXArray or PyTree: Depending on whether ``return_array`` is set to ``True`` or ``False`` will either return a JAXArray
         or PyTree giving the hessian with respect to each parameter in ``p``. If returning a JAXArray then the
@@ -392,26 +422,38 @@ def sigmoid(x):
 
 
 def transf_to_unbounded(par, bounds):
-    """Transformation used by PyMC and NumPyro to convert a parameter which lies
-    within the interval (bounds[0], bounds[1]) to the interval (-jnp.inf, jnp.inf).
-    
+    r"""Transformation used by ``PyMC`` and ``NumPyro`` to convert a parameter which lies
+    within the interval ``(bounds[0], bounds[1])`` to the interval ``(-jnp.inf, jnp.inf)``.
+
+    For a parameter :math:`p` with lower bound :math:`a` and upper bound :math:`b`:
+
+    .. math::
+
+        x = \log(p - a) - \log(b - p)
+
     Args:
-        p (JAXArray): A parameter value which lies in the interval (bounds[0], bounds[1])
-        bounds (:obj:`list` of JAXArray): A list containing the lower bound of p as its first
-            element and the upper bound of p as its second element
-        
+        par (JAXArray): A parameter value which lies in the interval ``(bounds[0], bounds[1])``.
+        bounds (:obj:`list` of JAXArray): A list containing the lower bound of ``par`` as its first
+            element and the upper bound of ``par`` as its second element.
+
     Returns:
-        JAXArray: The unbounded transformed value of p used by PyMC and NumPyro when sampling.
-    
+        JAXArray: The unbounded transformed value of ``par`` used by ``PyMC`` and ``NumPyro`` when sampling.
+
     """
     
     return jnp.log(par - bounds[0]) - jnp.log(bounds[1] - par)
 
 
 def transf_from_unbounded(x, bounds):
-    """Inverse of transformation transf_to_unbounded. Converts an unbounded parameter lying
-    within the interval (-jnp.inf, jnp.inf) to the bounded interval (bounds[0], bounds[1]).
-    
+    r"""Inverse of the transformation :func:`transf_to_unbounded`. Converts an unbounded parameter lying
+    within the interval ``(-jnp.inf, jnp.inf)`` to the bounded interval ``(bounds[0], bounds[1])``.
+
+    For a lower bound :math:`a` and upper bound :math:`b`:
+
+    .. math::
+
+        p = a + (b - a)\,\mathrm{sigmoid}(x)
+        
     Args:
         x (JAXArray): A parameter value which lies in the interval (-jnp.inf, jnp.inf).
         bounds (:obj:`list` of JAXArray): A list containing the lower bound of the parameter
@@ -436,7 +478,8 @@ def transf_to_unbounded_params(p, param_bounds):
     
     Examples:
         For a single parameter ``p["d"]`` which lies between bounds ``(a, b)``, ``param_bounds`` should be
-        of the form: ``param_bounds = {"d":[a, b]}`` where ``a`` and ``b`` have the same shape as ``p["d"]``.
+        of the form: ``param_bounds = {"d":[a, b]}`` where ``a`` and ``b`` are scalars or have the same shape
+        as ``p["d"]``.
     
     Args:
         p (PyTree): All parameters used for log likelihood calculations potentially including
@@ -444,7 +487,7 @@ def transf_to_unbounded_params(p, param_bounds):
         param_bounds (PyTree): Contains any bounds for the parameters in ``p``.
         
     Returns:
-        JAXArray: All parameters in ``p`` with the unbounded transformed values for any parameter in
+        PyTree: All parameters in ``p`` with the unbounded transformed values for any parameter in
         ``param_bounds``. Should match the transformed parameters being sampled by ``PyMC`` and ``NumPyro``.
     
     """
@@ -471,16 +514,17 @@ def transf_from_unbounded_params(p_unbounded, param_bounds):
     
     Examples:
         For a single parameter ``p["d"]`` which should lie between bounds ``(a, b)``, ``param_bounds`` should be
-        of the form: ``param_bounds = {"d":[a, b]}`` where ``a`` and ``b`` have the same shape as ``p["d"]``.
+        of the form: ``param_bounds = {"d":[a, b]}`` where ``a`` and ``b`` are scalars or have the same shape
+        as ``p["d"]``.
     
     Args:
         p_unbounded (PyTree): All parameters used for sampling by ``PyMC`` and ``NumPyro`` to convert
             for log likelihood calculations which lie in an transformed unbounded space.
-        param_bounds (PyTree): Contains any bounds for the parameters in ``p``.
-        
+        param_bounds (PyTree): Contains any bounds for the parameters in ``p_unbounded``.
+
     Returns:
-        JAXArray: All parameters used for log likelihood calculations potentially including
-        additional unbounded parameters.
+        PyTree: All parameters in ``p_unbounded``, with any parameters in ``param_bounds`` transformed
+        back to their bounded values used for log likelihood calculations.
     
     """
     
@@ -498,6 +542,30 @@ def transf_from_unbounded_params(p_unbounded, param_bounds):
 
 
 def bin_data_1D(t, y, bin_size):
+    """Bins a 1D time-series by averaging consecutive groups of ``bin_size`` points.
+
+    Both the input locations ``t`` and the data ``y`` are binned in the same way so they
+    stay aligned. If the number of points ``N`` is not a multiple of ``bin_size`` then the
+    final ``N % bin_size`` points are dropped before binning.
+
+    Args:
+        t (JAXArray): Input locations (e.g. times) of shape ``(N,)``.
+        y (JAXArray): Data values of shape ``(N,)``.
+        bin_size (int): Number of consecutive points to average into each bin. Values of 1
+            or less leave the data unbinned.
+
+    Returns:
+        (JAXArray, JAXArray): The binned input locations and binned data, each of shape
+        ``(N // bin_size,)``. Copies of ``t`` and ``y`` are returned if ``bin_size <= 1``.
+
+    Example:
+        >>> t = np.arange(10.)
+        >>> y = np.arange(10.)
+        >>> t_bin, y_bin = bin_data_1D(t, y, 3)
+        >>> y_bin  # last point dropped since 10 % 3 = 1
+        array([1., 4., 7.])
+
+    """
     N = y.size
         
     y_bin = y.copy()
@@ -519,6 +587,32 @@ def bin_data_1D(t, y, bin_size):
 
 
 def bin_data_2D(x_l, x_t, Y, l_bin, t_bin):
+    """Bins a 2D data set (e.g. a spectroscopic time-series) along one or both dimensions
+    by averaging consecutive groups of points.
+
+    The column (time) dimension is binned first by averaging groups of ``t_bin`` columns,
+    then the row (wavelength) dimension is binned by averaging groups of ``l_bin`` rows.
+    The input locations along each dimension are binned in the same way so they stay aligned
+    with the binned data. Any leftover points which don't fill a complete bin (i.e. the final
+    ``N_t % t_bin`` columns and ``N_l % l_bin`` rows) are dropped.
+
+    Used by :meth:`luas.GP.plot_lightcurves` to bin light curves for plotting.
+
+    Args:
+        x_l (JAXArray): Input locations along the row dimension (e.g. wavelength) of shape ``(N_l,)``.
+        x_t (JAXArray): Input locations along the column dimension (e.g. time) of shape ``(N_t,)``.
+        Y (JAXArray): Data of shape ``(N_l, N_t)``.
+        l_bin (int): Number of rows to average into each bin. Values of 1 or less leave
+            the row dimension unbinned.
+        t_bin (int): Number of columns to average into each bin. Values of 1 or less leave
+            the column dimension unbinned.
+
+    Returns:
+        (JAXArray, JAXArray, JAXArray): The binned row input locations of shape ``(N_l // l_bin,)``,
+        the binned column input locations of shape ``(N_t // t_bin,)`` and the binned data of shape
+        ``(N_l // l_bin, N_t // t_bin)``.
+
+    """
     N_l = Y.shape[0]
     N_t = Y.shape[1]
     
@@ -555,6 +649,34 @@ def bin_data_2D(x_l, x_t, Y, l_bin, t_bin):
 
 def interp_params(p_obs, p_pred, x, x_pred,
             interp_param = None, interp_row = 0):
+    """Linearly interpolates selected parameters from the observed input locations onto the
+    prediction locations.
+
+    Used when making GP predictions (see :meth:`luas.GP.predict`) for parameters which take a
+    different value at each input location along a dimension (e.g. a wavelength-dependent
+    transit depth). The interpolation uses :func:`jax.numpy.interp`, so the observed locations
+    must be in increasing order. Values at prediction locations outside the range of the observed
+    locations are set to the value at the nearest end point.
+
+    Args:
+        p_obs (PyTree): Parameters at the observed locations. Each parameter named in
+            ``interp_param`` must have one value per observed location.
+        p_pred (PyTree): Parameters at the prediction locations. Any parameters not named in
+            ``interp_param`` are returned unchanged.
+        x (JAXArray): Observed input locations, either of shape ``(N,)`` or ``(d, N)`` if there
+            are multiple input vectors along this dimension.
+        x_pred (JAXArray): Prediction input locations, either of shape ``(N_pred,)`` or
+            ``(d, N_pred)``.
+        interp_param (:obj:`list` of str, optional): Names of the parameters in ``p_obs`` to
+            interpolate. If ``None`` (the default) then ``p_pred`` is returned unchanged.
+        interp_row (int, optional): If ``x`` and ``x_pred`` have more than one row of input
+            locations, the index of the row to interpolate over. Defaults to 0.
+
+    Returns:
+        PyTree: A copy of ``p_pred`` where each parameter in ``interp_param`` has been replaced
+        by its value interpolated onto ``x_pred``.
+
+    """
 
     if interp_param is None:
         return p_pred
@@ -572,6 +694,33 @@ def interp_params(p_obs, p_pred, x, x_pred,
     
 
 def stack_params(p_obs, p_pred, stack_names = [], sort_fns = []):
+    """Joins parameters at the observed and prediction locations into a single PyTree of
+    parameters for the full set of stacked input locations.
+
+    For GP predictions, :meth:`luas.GP.predict` builds the covariance matrix over the observed
+    and prediction locations together. Parameters which take a separate value at each input
+    location must therefore be joined into a single array covering both. For each dimension
+    ``d``, every parameter named in ``stack_names[d]`` is concatenated as
+    ``[p_obs[par], p_pred[par]]``, then reordered with ``sort_fns[d]`` if a sorting function
+    is given, so it matches the ordering of the stacked input locations returned by
+    :func:`stack_obs_and_pred_points`.
+
+    Args:
+        p_obs (PyTree): Parameters at the observed locations.
+        p_pred (PyTree): Parameters at the prediction locations.
+        stack_names (:obj:`list` of :obj:`list` of str, optional): For each dimension, a list of
+            the names of the parameters to stack along that dimension. If ``None`` then ``p_obs``
+            is returned unchanged. Defaults to an empty list (no parameters stacked).
+        sort_fns (:obj:`list` of Callable, optional): For each dimension, the sorting function
+            returned by :func:`stack_obs_and_pred_points` (or ``None`` for no sorting). Must have
+            one entry for each entry in ``stack_names``.
+
+    Returns:
+        PyTree: A copy of ``p_obs`` where each stacked parameter has been replaced by the
+        (optionally sorted) concatenation of its observed and predicted values. All other
+        parameters keep their values from ``p_obs``.
+
+    """
 
     if stack_names is None:
         return p_obs
@@ -589,6 +738,40 @@ def stack_params(p_obs, p_pred, stack_names = [], sort_fns = []):
 
 
 def stack_obs_and_pred_points(x, x_pred, sort = None):
+    """Joins the observed and prediction input locations along one dimension into a single
+    array, keeping track of which entries are observed and which are predicted.
+
+    Used by :meth:`luas.GP.predict` to build the full set of input locations the conditional
+    GP is evaluated over. Most quasiseparable kernels require their input locations to be in
+    increasing order, so the stacked locations can optionally be sorted. A sorting function is
+    then also returned so that any parameters defined at each input location can be reordered
+    in the same way (see :func:`stack_params`).
+
+    If ``x_pred`` is ``None``, the prediction locations are taken to be the observed locations
+    and nothing is stacked, so every point is marked as both observed and predicted.
+
+    Args:
+        x (JAXArray): Observed input locations of shape ``(N,)`` or ``(d, N)``.
+        x_pred (JAXArray, optional): Prediction input locations of shape ``(N_pred,)`` or
+            ``(d, N_pred)``. If ``None`` then taken to be equal to ``x``.
+        sort (bool, optional): Whether to sort the stacked input locations into increasing
+            order. Sorting currently assumes 1D input locations of shape ``(N,)``.
+            Defaults to ``None`` (no sorting).
+
+    Returns:
+        (JAXArray, JAXArray, JAXArray, JAXArray, Callable): A tuple of five elements:
+
+        - **x_total** - The stacked (and optionally sorted) input locations, of shape
+          ``(N + N_pred,)`` (or ``(N,)`` if ``x_pred`` is ``None``).
+        - **x_pred** - The prediction input locations, which is a copy of ``x`` if ``x_pred``
+          was ``None``.
+        - **obs_points** - Boolean mask over ``x_total`` which is ``True`` at observed locations.
+        - **pred_points** - Boolean mask over ``x_total`` which is ``True`` at prediction locations.
+        - **sort_fn** - Function ``sort_fn(mat, inverse = False)`` which reorders the first axis of
+          an array from the stacked ordering ``[x, x_pred]`` into the sorted ordering (or back
+          again if ``inverse = True``). ``None`` if ``sort`` is falsy.
+
+    """
     
     N = x.shape[-1]
     

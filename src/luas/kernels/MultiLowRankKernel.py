@@ -171,6 +171,7 @@ class MultiLowRankKernel(CovType):
         orthogonalise = False,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         assert fast_dim is not None # Must specify the fast dimension
         self.Sigma = Sigma[0], Sigma[1]
         self.K_list = K_list
@@ -257,6 +258,19 @@ class MultiLowRankKernel(CovType):
 
 
     def make_orthogonal(self, A, X):
+        r"""Removes the non-orthogonal part of a set of low-rank vectors. The columns of ``A`` are whitened by the noise
+        covariance matrix along the low-rank dimension (the dimension other than ``fast_dim``), orthogonalised with
+        a Householder QR decomposition (see :func:`luas.kernels.householder.householder_qr_and_orthogonalise`),
+        and transformed back. Used by :meth:`luas.GP.orthogonalise`.
+
+        Args:
+            A (JAXArray): The low-rank vectors, one per column, along the low-rank dimension.
+            X (tuple): Input locations along each dimension.
+
+        Returns:
+            JAXArray: The orthogonalised vectors, with the same shape as ``A``.
+
+        """
 
         # Generate transformations to handle whitening for measurement covariance/noise
         self.Sigma_transf, stored_values_Sigma_transf = self.Sigma[1-self.fast_dim].decompose(X[1-self.fast_dim], full = True)
@@ -279,6 +293,26 @@ class MultiLowRankKernel(CovType):
         full = True,
         idx = None,
     ) -> PyTree:
+        r"""Decomposes the covariance matrix.
+
+        The low-rank vectors are whitened by the noise covariance along the low-rank dimension and QR decomposed
+        with Householder transformations. Along ``fast_dim`` the problem then reduces to a dense block of size
+        :math:`(N_\alpha N_{\mathrm{fast}}, N_\alpha N_{\mathrm{fast}})`, which mixes the kernels of each low-rank
+        term (``MixingMatQuasisep`` if ``use_quasi = True``, otherwise ``MixingMatGeneral``, or independent blocks
+        with ``DifferentBlocksKernel`` if ``orthogonalise = True``). If there are fewer low-rank terms than the
+        length of the low-rank dimension, the remaining block only contains the noise term and is combined with the
+        dense block using ``Block2x2Kernel``.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Not used, the stored values are built from scratch.
+            full (bool, optional): Must be ``True``.
+            idx (optional): Not used.
+
+        Returns:
+            (MultiLowRankKernel, PyTree): Itself and the stored values, including ``"logdet"``.
+
+        """
 
         # should to something about idx and full
         assert full == True
@@ -374,6 +408,12 @@ class MultiLowRankKernel(CovType):
         
     
     def transform_fn(self, R, transpose = 0):
+        r"""Applies the transformation :math:`\mathbf{T}` along the low-rank dimension (or :math:`\mathbf{T}^T` if
+        ``transpose = 1``): the matrix square root of the noise covariance along that dimension, combined with the
+        Householder transformation from the QR decomposition of the whitened low-rank vectors (if the problem was
+        reduced). Requires :meth:`decompose` to have been called.
+
+        """
         
         if self.fast_dim == 0:
             R_prime = R.T
@@ -397,6 +437,10 @@ class MultiLowRankKernel(CovType):
 
 
     def inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse transformation :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if ``transpose = 1``),
+        see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
         
         if self.fast_dim == 0:
             R_prime = R.T
@@ -423,6 +467,11 @@ class MultiLowRankKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}` (or :math:`\mathbf{L}^T` if
+        ``transpose = 1``), where :math:`\mathbf{T}` is applied by :meth:`transform_fn` and :math:`\tilde{\mathbf{L}}` is the matrix
+        square root of the transformed covariance matrix. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -439,6 +488,10 @@ class MultiLowRankKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = \tilde{\mathbf{L}}^{-1}\mathbf{T}^{-1}` (or :math:`\mathbf{L}^{-T}` if
+        ``transpose = 1``), see :meth:`matrix_sqrt`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.kf_tilde.matrix_inv_sqrt(R, transpose = 1)
@@ -451,6 +504,21 @@ class MultiLowRankKernel(CovType):
 
 
     def matmul(self, X1, X2, R, full = True, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it. If
+        ``orthogonalise = True`` the low-rank vectors are orthogonalised first, so the product uses the
+        orthogonalised vectors.
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The data-shaped array to multiply.
+            full (bool, optional): Must be ``True``.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         if full != True:
             raise Exception("MultiLowRankKernel can only build full square matrices")

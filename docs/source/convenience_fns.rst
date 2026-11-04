@@ -1,9 +1,9 @@
-jax_convenience_fns
-===================
+convenience_fns
+===============
 
-.. automodule:: luas.jax_convenience_fns
+.. automodule:: luas.convenience_fns
 
-.. currentmodule:: luas.jax_convenience_fns
+.. currentmodule:: luas.convenience_fns
 
 .. autosummary::
    :toctree: summary
@@ -21,3 +21,8 @@ jax_convenience_fns
    transf_from_unbounded
    transf_to_unbounded_params
    transf_from_unbounded_params
+   bin_data_1D
+   bin_data_2D
+   interp_params
+   stack_params
+   stack_obs_and_pred_points

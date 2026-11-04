@@ -31,44 +31,77 @@ __all__ = ["GP"]
 
 
 class GP(object):
-    """Gaussian process interface specialised to make the analysis of grid-based data sets simple and efficient.
-    
-    Must have separable input dimensions which are used to compute the covariance matrix and may additionally
-    be used to compute the mean function and log prior. The observed data ``Y`` used for calculations is assumed to be a JAXArray
-    matching the dimensions of the input regression tuple and input kernel function and mean function.
+    r"""Gaussian process interface for 1D data sets, and for 2D (or higher) data sets on a grid.
+
+    The covariance matrix of a 2D (or higher) data set is built from kernels along each dimension,
+    e.g. one along wavelength and one along time. When the object is created, ``luas`` looks at the
+    structure of these kernels and chooses an optimised method (one of the
+    :doc:`Kronecker kernel classes <kronecker_kernels>`) for calculating the log likelihood and
+    its gradients. ``verbose = True`` prints which one was chosen, and ``use_kernel`` can be
+    used to choose a different one.
+
+    Example:
+        A 2D GP with a squared exponential kernel along each dimension plus white noise::
+
+            def kf(p, X):
+                Kl = luas.kernels.SquaredExp(p["l_l"], sigma = p["h"])
+                Kt = luas.kernels.SquaredExp(p["l_t"])
+                Sl = luas.kernels.Noise(p["sigma_l"])
+                St = luas.kernels.Noise(1.)
+                return (Sl, St), (Kl, Kt)
+
+            gp = luas.GP(p, (x_l, x_t), kf = kf, mf = transit_2D)
+            logL = gp.logL(p, Y)
 
     Args:
-        p (PyTree | dict): A PyTree of parameters which 
-        X (JAXArray | tuple): For 1D this should be a JAXArray containing the regression variable(s).
-            May be of shape ``(N,)`` or ``(d, N)`` for ``d`` different regression variables.
-            For 2D or higher this should be a tuple of JAXArrays containing the regression variable(s) in each dimension.
-            The order of the regression variables should match the shape of the observed data array.
-        kf (Callable, optional): Function which returns the kernel function to use. Needs to be in the format ``kf(p, X, *kf_args, **kf_kwargs)``
-            For 1D this should return a kernel or sum/product of kernels from luas.kernels directly.
-            For 2D or higher, this should return a tuple or multiple tuples containing the kernel functions in each dimension,
-            in the same order as X and the observed data array.
-        mf (Callable, optional): The deterministic mean function, by default returns a JAXArray of zeros.
-            Needs to be in the format ``mf(p, X, *mf_args, **mf_kwargs)`` and returns a JAXArray of the same shape
-            as the observed data array.
-        logPrior (Callable, optional): Log prior function, by default returns zero.
-            Needs to be in the format ``logPrior(params, X, *logPrior_args, **logPrior_kwargs)`` and return a scalar.
-        jit (bool, optional): Whether to ``jax.jit`` compile the likelihood, posterior and GP prediction
-            functions. If set to ``False`` then mean functions not written in ``JAX`` are supported and
-            can still be used with ``PyMC`` (but not ``NumPyro`` which requires JIT compilation).
-            Defaults to ``True``.
-        use_kernel (CovType, optional): Whether to use a specific GP optimisation, rather than the one automatically identified as fast by luas.
-            For example, luas.GeneralKernel will force luas to avoid any optimisations and just build the full covariance matrix and use Cholesky decomposition.
-            In some cases, multiple GP optimisations are valid and it may be worth testing which is fastest,
-            such as luas.LuasKernel and luas.LuasLasrachKernel which should always be valid for the same kernel functions.
-            Some kernels require certain keyword arguments to be specified, which can be input as any additional keyword arguments within kernel_kwargs.
-        verbose (bool, optional): Print information about which optimisations are being used at initialisation.
-        kf_args (tuple, optional): Any additional parameters to input to the kernel function ``kf(p, X, *kf_args, **kf_kwargs)``.
-        kf_kwargs (dict, optional): Any keyword arguments to input to the kernel function ``kf(p, X, *kf_args, **kf_kwargs)``.
-        mf_args (tuple, optional): Any additional parameters to input to the mean function ``mf(p, X, *mf_args, **mf_kwargs)``.
-        mf_kwargs (dict, optional): Any keyword arguments to input to the mean function ``mf(p, X, *mf_args, **mf_kwargs)``.
-        logPrior_args (tuple, optional): Any additional parameters to input to the logPrior function ``logPrior(p, X, *logPrior_args, **logPrior_kwargs)``.
-        logPrior_kwargs (dict, optional): Any keyword arguments to input to the logPrior function ``logPrior(p, X, *logPrior_args, **logPrior_kwargs)``.
-            
+        p (PyTree): Parameters used to evaluate the kernel function once when the object is created,
+            to check its structure and choose which GP optimisation to use. Must contain every parameter
+            the kernel function needs.
+        X (JAXArray | tuple): The input locations (regression variables). For 1D data this is a JAXArray
+            of shape ``(N,)``, or ``(d, N)`` for ``d`` different input variables. For 2D or higher this is a
+            tuple with one such JAXArray per dimension, in the same order as the dimensions of the
+            observed data array.
+        kf (Callable | CovType, optional): The kernel function, called as ``kf(p, X, *kf_args, **kf_kwargs)``.
+            For 1D data it should return a single kernel from :doc:`luas.kernels <kernels>` (or a sum or
+            product of kernels). For 2D or higher it should return either a tuple with one kernel per
+            dimension, representing the Kronecker product of those kernels, or a tuple of such tuples
+            which are summed. For example ``(Sl, St), (Kl, Kt)`` represents
+            :math:`\mathbf{S}_l \otimes \mathbf{S}_t + \mathbf{K}_l \otimes \mathbf{K}_t`, where the
+            first term is usually the noise term. It can also return a Kronecker kernel object directly,
+            or a fixed covariance object can be given instead of a function. If not given, the
+            covariance matrix is the identity matrix (unweighted least squares).
+        mf (Callable, optional): The deterministic mean function, called as ``mf(p, X, *mf_args, **mf_kwargs)``.
+            Must return a JAXArray with the same shape as the observed data. Defaults to zero.
+        logPrior (Callable, optional): The log prior, called as
+            ``logPrior(p, X, *logPrior_args, **logPrior_kwargs)`` and returning a scalar. Defaults to zero.
+        jit (bool, optional): Whether to ``jax.jit`` compile :meth:`logL`, :meth:`logP`,
+            :meth:`logL_stored`, :meth:`logP_stored`, :meth:`logL_hessianable` and
+            :meth:`logP_hessianable`. Set to ``False`` to use a mean function which isn't written in
+            ``JAX``, or to make debugging easier. Defaults to ``True``.
+        use_kernel (optional): A Kronecker kernel class to use instead of the one ``luas`` chooses
+            automatically, e.g. ``luas.GeneralKernel`` builds the full covariance matrix and uses a
+            Cholesky decomposition with no optimisations. When more than one optimisation is valid
+            (e.g. ``luas.LuasKernel`` and ``luas.LuasLasrachKernel``) it can be worth testing which is
+            fastest. Any keyword arguments the class needs can be given as extra keyword arguments.
+        kernel_select_kwargs (dict, optional): Keyword arguments passed to the automatic choice of GP
+            optimisation for 2D data, e.g. ``max_gen_cholesky_blocks``.
+        verbose (bool, optional): Whether to print which GP optimisation is being used. Defaults to ``True``.
+        kf_args (tuple, optional): Extra positional arguments passed to the kernel function.
+        kf_kwargs (dict, optional): Extra keyword arguments passed to the kernel function.
+        mf_args (tuple, optional): Extra positional arguments passed to the mean function.
+        mf_kwargs (dict, optional): Extra keyword arguments passed to the mean function.
+        logPrior_args (tuple, optional): Extra positional arguments passed to the log prior function.
+        logPrior_kwargs (dict, optional): Extra keyword arguments passed to the log prior function.
+        **kernel_kwargs: Any other keyword arguments are passed to the Kronecker kernel class when it is
+            built, e.g. ``fast_dim`` for ``luas.LuasLasrachKernel``. These override any values chosen
+            automatically.
+
+    Attributes:
+        x (JAXArray | tuple): The input locations ``X``.
+        dim (int): The number of dimensions of the data set.
+        data_shape (tuple): The shape of the data set, e.g. ``(N_l, N_t)``.
+        opt_name (str): The name of the GP optimisation (Kronecker kernel class) being used.
+
     """
     
     def __init__(
@@ -159,16 +192,28 @@ class GP(object):
 
 
     def sample(self, p, add_mf = True, samples = 1, return_variance = False):
-        """Sample from the GP prior distribution. Useful for visualising a GP model and generating synthetic data.
-        
+        r"""Draws random samples from the GP. Useful for visualising a GP model and generating
+        synthetic data.
+
+        Samples are drawn using the matrix square root of the covariance matrix
+        :math:`\mathbf{K} = \mathbf{L}\mathbf{L}^T` as :math:`\vec{y} = \vec{\mu} + \mathbf{L}\vec{z}`,
+        where :math:`\vec{z}` is drawn from a standard normal distribution using ``numpy.random``
+        (so ``np.random.seed`` can be used for reproducible draws).
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            add_mf (bool, optional): Whether to add the mean function to the GP draw, default is True.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            add_mf (bool, optional): Whether to add the mean function to the samples. Defaults to ``True``.
+            samples (int, optional): The number of samples to draw. Defaults to 1.
+            return_variance (bool, optional): If ``True`` (and ``samples > 1``), return a Monte Carlo estimate
+                of the variance at each data point from the samples instead of the samples themselves.
+                Used by :meth:`get_diagonal`. Defaults to ``False``.
+
         Returns:
-            JAXArray: A random draw from the GP prior distribution.
-            
+            JAXArray: For ``samples = 1``, a single sample with shape ``GP.data_shape``. For ``samples > 1``,
+            an array of shape ``(samples, *GP.data_shape)``, or the estimated variance with shape
+            ``GP.data_shape`` if ``return_variance = True``.
+
         """
 
         self.kf_eval = self.build_kf(p, self.x)
@@ -203,12 +248,29 @@ class GP(object):
         return R
 
     def get_diagonal(self, p, samples = None, **kwargs):
+        r"""Returns the diagonal of the covariance matrix, i.e. the variance at each data point.
+
+        Uses the exact diagonal if the kernel being used can calculate it. Otherwise, if ``samples``
+        is given, the diagonal is estimated from that many random samples (see :meth:`sample`), with an
+        error which decreases as ``1/sqrt(samples)``.
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            samples (int, optional): The number of samples to use if the diagonal has to be estimated.
+                If not given and the exact diagonal isn't available, an Exception is raised.
+            **kwargs: Passed to the kernel's ``diagonal`` method.
+
+        Returns:
+            JAXArray: The variance at each data point, with shape ``GP.data_shape``.
+
+        """
 
         self.kf_eval = self.build_kf(p, self.x)
 
-        try:
+        if hasattr(self.kf_eval, "diagonal"):
             return self.kf_eval.diagonal(self.x, **kwargs)
-        except:
+        else:
             if samples is not None:
                 print("Estimating diagonal of GP covariance matrix stochastically, this may take a while for large models...")
                 diagonal_est = self.sample(p, samples = samples, return_variance = True)
@@ -222,17 +284,28 @@ class GP(object):
         p: PyTree,
         Y: JAXArray,
     ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
+        r"""Computes the log likelihood.
+
+        .. math::
+
+            \log \mathcal{L} = -\frac{1}{2} \vec{r}^T \mathbf{K}^{-1} \vec{r}
+            - \frac{1}{2} \log |\mathbf{K}| - \frac{N}{2} \log 2\pi
+
+        where :math:`\vec{r} = \vec{y} - \vec{\mu}` are the residuals of the data after subtracting the
+        mean function, :math:`\mathbf{K}` is the covariance matrix and :math:`N` is the total number of data points.
+
+        This method is JIT compiled unless the GP was created with ``jit = False``. Use
+        :meth:`logL_hessianable` instead if second derivatives (e.g. ``jax.hessian``) are needed.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+
         Returns:
-            Scalar: The value of the log likelihood.
-            
+            Scalar: The log likelihood.
+
         """
         
         # Calculate the residuals after subtraction of the deterministic mean function
@@ -255,6 +328,40 @@ class GP(object):
         fixed_vars: Optional[list] = None,
         bound_tol = 1e-9,
     ):
+        r"""Builds a ``PyMC`` model of the GP posterior, for optimisation or sampling with ``PyMC``.
+
+        Each parameter being varied is given a uniform prior between its bounds in ``param_bounds``
+        (``pm.Uniform``), or an improper flat prior if it has no bounds (``pm.Flat``). The log posterior
+        from :meth:`logP_stored`, which includes the GP's own log prior function, is added to the model as a
+        ``pm.Potential``. Prints which parameters are being varied and which are fixed.
+
+        Requires ``PyMC`` to be installed.
+
+        Example:
+            ``param_bounds`` should be of the form ``param_bounds[par] = [lower_bound, upper_bound]``,
+            where the bounds are scalars or arrays with the same shape as ``p[par]``.
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function. Also passed to the log prior function. Used as the values of any fixed parameters and as the starting values of the
+                parameters being varied.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            param_bounds (PyTree, optional): Lower and upper bounds for any of the parameters being varied.
+            vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to vary. All other
+                parameters are kept fixed. Cannot be given together with ``fixed_vars``.
+            fixed_vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to keep fixed, as an
+                alternative to ``vars``. If neither is given, all parameters are varied.
+            bound_tol (Scalar, optional): Starting values which lie exactly on a bound are moved inside it by
+                this amount (see :func:`luas.convenience_fns.check_params_in_bounds`). Defaults to ``1e-9``.
+
+        Returns:
+            (pm.Model, dict, PyTree): A tuple of three elements: the ``PyMC`` model; a dictionary of the
+            ``PyMC`` variables for each parameter being varied, together with the values of the fixed
+            parameters; and the starting values of the parameters being varied (as NumPy arrays), which can
+            be used as the starting point for ``pm.find_MAP`` or ``pm.sample``.
+
+        """
         # Lazy import to avoid PyMC being a dependency unless needed
         from luas.pymc_ext import build_pymc_model
 
@@ -279,6 +386,32 @@ class GP(object):
 
 
     def optimise(self, p_init, Y, param_bounds = {}, vars = None, fixed_vars = None, maxeval = 5000, include_transformed = False, **kwargs):
+        r"""Finds the parameters which maximise the posterior (the maximum a posteriori fit) using
+        ``pm.find_MAP``.
+
+        Builds a ``PyMC`` model with :meth:`pymc_model` and optimises it starting from ``p_init``. Requires
+        ``PyMC`` to be installed.
+
+        Args:
+            p_init (PyTree): Starting values of all the parameters. Parameters which aren't being varied are
+                kept fixed at these values.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            param_bounds (PyTree, optional): Lower and upper bounds for any of the parameters being varied,
+                in the form ``param_bounds[par] = [lower_bound, upper_bound]``.
+            vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to vary. All other
+                parameters are kept fixed. Cannot be given together with ``fixed_vars``.
+            fixed_vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to keep fixed, as an
+                alternative to ``vars``. If neither is given, all parameters are varied.
+            maxeval (int, optional): The maximum number of optimisation steps. Defaults to 5000.
+            include_transformed (bool, optional): Whether to also return the values of the bounded parameters
+                in the unbounded space ``PyMC`` optimises in. Defaults to ``False``.
+            **kwargs: Passed to ``pm.find_MAP``, e.g. ``method``.
+
+        Returns:
+            PyTree: A copy of ``p_init`` with the parameters being varied replaced by their optimised values.
+
+        """
         # Lazy import to avoid PyMC being a dependency unless needed
         import pymc as pm
 
@@ -306,35 +439,38 @@ class GP(object):
         Y: JAXArray,
         stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
-        """Computes the log likelihood and also returns any stored values from the decomposition of
-        the covariance matrix. This allows time to be saved in future log likelihood calculations in
-        which some hyperparameters are either fixed or being sampled separately with Gibbs/Blocked Gibbs
-        sampling.
-        
+        r"""Computes the log likelihood and also returns values stored from the decomposition of
+        the covariance matrix.
+
+        Takes the same inputs and returns the same outputs as the function ``luas`` uses for inference with
+        ``PyMC``, which passes the stored values from each call on to the next. The input ``stored_values``
+        are passed on to the decomposition and reused by kernels which support this (``luas.LuasKernel``
+        created with ``use_stored_values = True``), which saves time when some hyperparameters are fixed or
+        are sampled separately (e.g. with blocked Gibbs sampling).
+
         Note:
-            This function will not give correct second order derivatives/hessian values (e.g. calculated
-            using `jax.hessian`). Make sure to use `GP.logL_hessianable_stored` if any hessian calculations
-            are required.
-        
+            This method does not give accurate second derivatives (e.g. using ``jax.hessian``). Use
+            :meth:`logL_hessianable_stored` if they are needed.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
-                values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
-                ``Kernel.decomp_fn``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            stored_values (PyTree): Values stored from a previous decomposition of the covariance
+                matrix, such as the output of a previous call to this method. Their contents depend on
+                the kernel class being used.
+
         Returns:
-            (Scalar, PyTree): A tuple where the first element is the value of the log likelihood.
-            The second element is a PyTree which contains stored values from the decomposition of the
-            covariance matrix.
-            
+            (Scalar, PyTree): A tuple of the log likelihood and the values stored from the decomposition of
+            the covariance matrix.
+
         """
         
         R = Y - self.mf(p,  self.x)
         
         self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})  
+        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = stored_values)  
         logL_val = self.kf_eval.logL(R, stored_values = stored_values)
     
         return logL_val, stored_values
@@ -345,18 +481,27 @@ class GP(object):
         p: PyTree,
         Y: JAXArray,
     ) -> Scalar:
-        """Computes the log posterior without returning any stored values from the
-        decomposition of the covariance matrix.
-        
+        r"""Computes the log posterior (up to a constant), i.e. the log prior plus the log likelihood.
+
+        .. math::
+
+            \log \mathcal{P} = \log \pi(\vec{p}) + \log \mathcal{L}
+
+        where :math:`\log \pi(\vec{p})` is the log prior function the GP was created with, and the log
+        likelihood is calculated as in :meth:`logL`.
+
+        This method is JIT compiled unless the GP was created with ``jit = False``. Use
+        :meth:`logP_hessianable` instead if second derivatives (e.g. ``jax.hessian``) are needed.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-                Also input to the logPrior function for the calculation of the log priors.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function. Also passed to the log prior function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+
         Returns:
-            Scalar: The value of the log posterior.
-            
+            Scalar: The log posterior.
+
         """
 
         R = Y - self.mf(p,  self.x)
@@ -377,37 +522,39 @@ class GP(object):
         Y: JAXArray,
         stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
-        """Computes the log posterior and also returns any stored values from the decomposition of the
-        covariance matrix. This allows time to be saved in future log likelihood calculations in
-        which some hyperparameters are either fixed or being sampled separately with Gibbs/Blocked Gibbs
-        sampling.
-        
+        r"""Computes the log posterior and also returns values stored from the decomposition of the
+        covariance matrix.
+
+        This is the function ``luas`` uses by default for inference with ``PyMC`` (see :meth:`pymc_model`),
+        which passes the stored values from each call on to the next. The input ``stored_values`` are passed
+        on to the decomposition and reused by kernels which support this (``luas.LuasKernel`` created with
+        ``use_stored_values = True``), which saves time when some hyperparameters are fixed or are sampled
+        separately (e.g. with blocked Gibbs sampling).
+
         Note:
-            This function will not give correct second order derivatives/hessian values (e.g. calculated
-            using `jax.hessian`). Make sure to use `GP.logP_hessianable_stored` if any hessian calculations
-            are required.
-        
+            This method does not give accurate second derivatives (e.g. using ``jax.hessian``). Use
+            :meth:`logP_hessianable_stored` if they are needed.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-                Also input to the logPrior function for the calculation of the log priors.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
-                values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
-                ``Kernel.decomp_fn``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function. Also passed to the log prior function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            stored_values (PyTree): Values stored from a previous decomposition of the covariance
+                matrix, such as the output of a previous call to this method. Their contents depend on
+                the kernel class being used.
+
         Returns:
-            (Scalar, PyTree): A tuple where the first element is the value of the log posterior.
-            The second element is a PyTree which contains stored values from the decomposition of the
-            covariance matrix.
-            
+            (Scalar, PyTree): A tuple of the log posterior and the values stored from the decomposition of
+            the covariance matrix.
+
         """
 
         
         R = Y - self.mf(p,  self.x)
         
         self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})  
+        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = stored_values)  
         logL_val = self.kf_eval.logL(R, stored_values = stored_values)
 
         logPrior = self.logPrior(p, self.x)
@@ -416,13 +563,44 @@ class GP(object):
         return logP, stored_values
 
     
-    def crossval(self, p, Y,
-                 train_l = None, train_t = None,
-                 stack_p_dim1 = [], stack_p_dim2 = [],
-                 return_predicted_loc = False,
-                 **kwargs):
+    def crossval(self, p, Y, params_to_stack = None, train_ind = None, **kwargs):
+        r"""Cross-validation for 2D data: fits the GP to a subset of the rows and/or columns of the
+        data and predicts the rest.
+
+        The GP is conditioned on the training rows and columns selected by ``train_ind``, and the remaining
+        rows and columns are predicted using :meth:`predict`. Comparing the predictions with the held-out
+        data tests how well the GP model predicts data it wasn't fit to.
+
+        Example:
+            To train on every other row and all columns, with a transit depth ``p["rp"]`` that has one value
+            per row::
+
+                train_l = np.arange(N_l) % 2 == 0
+                gp_mean, M, gp_cond = gp.crossval(p, Y, params_to_stack = [["rp"], []],
+                                                  train_ind = (train_l, None))
+
+        Args:
+            p (PyTree): Parameters for the full data set, including any hyperparameters needed by the kernel
+                function and any parameters needed by the mean function.
+            Y (JAXArray): Observed data for the full data set, with shape ``(N_l, N_t)``.
+            params_to_stack (list): A list ``[params_l, params_t]`` of two lists of parameter names. The
+                parameters in ``params_l`` have one value per row (e.g. a wavelength-dependent transit depth)
+                and are split between the training and predicted rows, and likewise ``params_t`` for columns.
+                Use an empty list for a dimension which isn't split.
+            train_ind (tuple): A tuple ``(train_l, train_t)`` of boolean masks of shape ``(N_l,)`` and
+                ``(N_t,)`` which are ``True`` for the rows and columns to train on. Either can be ``None`` to
+                train on all rows or all columns, but not both.
+            **kwargs: Passed to :meth:`predict`, e.g. ``return_predicted_loc``.
+
+        Returns:
+            (JAXArray, JAXArray, GP): The outputs of :meth:`predict`: the GP predictive mean, the mean function
+            at the predicted locations and the conditional GP object.
+
+        """
 
         x_l, x_t = self.x
+        train_l, train_t = train_ind
+        stack_p_dim1, stack_p_dim2 = params_to_stack
     
         p_obs = deepcopy(p)
         p_pred = deepcopy(p)
@@ -451,14 +629,16 @@ class GP(object):
                 p_obs[par] = p_obs[par][train_t]
         else:
             x_t_pred = None
+
+        X_obs = (x_l, x_t)
+        X_pred = (x_l_pred, x_t_pred)
     
         gp_mean_pred, M_pred, gp_cond_obj = self.predict(
             p_obs, Y,
             p_pred = p_pred,
-            X_obs = (x_l, x_t),
-            X_pred = (x_l_pred, x_t_pred),
-            stack_p_dim1 = stack_p_dim1, stack_p_dim2 = stack_p_dim2,
-            return_predicted_loc = return_predicted_loc,
+            X_obs = X_obs,
+            X_pred = X_pred,
+            params_to_stack= params_to_stack,
             **kwargs,
         )
         return gp_mean_pred, M_pred, gp_cond_obj
@@ -476,47 +656,85 @@ class GP(object):
                 fast_dim = None, return_predicted_loc = True,
                 return_pred_err = False, samples = 1000):
     
-        r"""Performs GP regression and computes the GP predictive mean and the GP predictive
-        uncertainty as the standard devation at each location or else can return the full
-        covariance matrix. Requires the input kernel function(s) to have a ``wn`` keyword
-        argument that defines the kernel when white noise is included (``wn = True``) and
-        when white noise isn't included (``wn = False``).
-        
-        Currently assumes the same input hyperparameters for both the observed and predicted
-        locations. The predicted locations ``x_l_pred`` and ``x_t_pred`` may deviate from
-        the observed locations ``x_l`` and ``x_t`` however.
-        
-        The GP predictive mean is defined as:
-        
+        r"""Makes GP predictions: computes the GP predictive mean, and optionally the predictive
+        uncertainty, at a set of prediction locations given the observed data.
+
+        The GP predictive mean and covariance at the prediction locations are
+
         .. math::
-        
-            \mathbb{E}[\vec{y}_*] = \vec{\mu}_* + \mathbf{K}_*^T \mathbf{K}^{-1} \vec{r}
-        
-        And the GP predictive covariance is given by:
-        
+
+            \mathbb{E}[\vec{y}_*] = \vec{\mu}_* + \mathbf{K}_*^T \mathbf{K}^{-1} (\vec{y} - \vec{\mu})
+
         .. math::
-        
-            Var[\vec{y}_*] = \mathbf{K}_{**} - \mathbf{K}_*^T \mathbf{K}^{-1} \mathbf{K}_*
-        
+
+            \mathrm{Var}[\vec{y}_*] = \mathbf{K}_{**} - \mathbf{K}_*^T \mathbf{K}^{-1} \mathbf{K}_*
+
+        where :math:`\mathbf{K}` is the covariance matrix of the observed data, :math:`\mathbf{K}_*` is the
+        covariance between the observed and prediction locations, :math:`\mathbf{K}_{**}` is the covariance
+        matrix of the prediction locations, and :math:`\vec{\mu}` and :math:`\vec{\mu}_*` are the mean
+        function at the observed and prediction locations.
+
+        To do this, the observed and prediction locations along each dimension are stacked together (and
+        sorted, see ``sort``), and the kernel is evaluated over the full stacked set of locations (see
+        :func:`luas.convenience_fns.stack_obs_and_pred_points`). The hyperparameters are assumed to be the
+        same at the observed and prediction locations, except for any parameters given in
+        ``params_to_stack`` or ``params_to_interpolate``.
+
+        Note:
+            The predictive uncertainty is estimated from random samples of the conditional GP, which can be
+            slow for large data sets. The returned conditional GP object can also be used to draw samples
+            from the predictive distribution directly, e.g. ``gp_cond.sample(p_pred)``.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            x_l_pred (JAXArray, optional): Prediction locations along the row dimension,
-                defaults to observed input locations.
-            x_t_pred (JAXArray, optional): Prediction locations along the column dimension,
-                defaults to observed input locations.
-            return_std_dev (bool, optional): If ``True`` will return the standard deviation ofuncertainty
-                at the predicted locations. Otherwise will return the full predictive covariance matrix.
-                Defaults to ``True``.
-        
+            p (PyTree): Parameters at the observed locations, including any hyperparameters needed by the
+                kernel function and any parameters needed by the mean function.
+            Y (JAXArray): Observed data at the locations ``X_obs``.
+            p_pred (PyTree, optional): Parameters at the prediction locations. Only needed for parameters
+                which take different values at the prediction locations (see ``params_to_stack``).
+                Defaults to a copy of ``p``.
+            X_obs (JAXArray | tuple, optional): Observed input locations, in the same format as ``X`` when
+                creating the GP. Defaults to the input locations the GP was created with.
+            X_pred (JAXArray | tuple, optional): Prediction locations. For 1D data a JAXArray. For 2D data a
+                tuple ``(x_l_pred, x_t_pred)``, where either entry can be ``None`` to make predictions only at
+                the observed locations along that dimension. If not given, predictions are made at the
+                observed locations.
+            params_to_stack (list, optional): Names of parameters which have one value per input location
+                (e.g. a wavelength-dependent transit depth). Their values from ``p`` and ``p_pred`` are joined
+                to cover the full set of stacked locations (see
+                :func:`luas.convenience_fns.stack_params`). For 1D data a list of names, for 2D data a list
+                with one list of names per dimension.
+            params_to_interpolate (list, optional): Names of parameters which have one value per input
+                location, whose values at the prediction locations are linearly interpolated from their
+                values in ``p`` (see :func:`luas.convenience_fns.interp_params`). For 1D data a list of
+                names, for 2D data a list with one list of names (or ``None``) per dimension.
+            input_vecs_for_interp (int | list, optional): If the input locations have more than one row
+                (shape ``(d, N)``), the row to interpolate over. For 2D data a list with one entry per
+                dimension, which must be given if ``params_to_interpolate`` is.
+            sort (bool | list, optional): Whether to sort the stacked input locations along each dimension
+                (one bool per dimension for 2D data). Most quasiseparable kernels need sorted inputs.
+                Defaults to ``True`` for every dimension.
+            fast_dim (int, optional): For 2D data when ``X_pred`` isn't given, the dimension (0 or 1) along
+                which a copy of the observed locations is stacked to make predictions at the observed
+                locations. Defaults to 0.
+            return_predicted_loc (bool, optional): For 2D data, if ``True`` only return predictions at the
+                prediction locations, otherwise return predictions at the full stacked set of observed and
+                prediction locations. Defaults to ``True``.
+            return_pred_err (bool, optional): Whether to also estimate the predictive standard deviation at
+                each prediction location. Defaults to ``False``.
+            samples (int, optional): The number of random samples used to estimate the predictive standard
+                deviation if ``return_pred_err = True``. The error in the estimate decreases as
+                ``1/sqrt(samples)``. Defaults to 1000.
+
         Returns:
-            (JAXArray, JAXArray, JAXArray): Returns a tuple of three elements, where the first element is
-            the GP predictive mean at the prediction locations, the second element is either the
-            standard deviation of the predictions if ``return_std_dev = True``, otherwise it will be
-            the full covariance matrix of the predicted values. The third element will be the mean function
-            evalulated at the prediction locations.
-        
+            tuple: If ``return_pred_err = False``, a tuple ``(gp_mean, M_pred, gp_cond)``, otherwise
+            ``(gp_mean, pred_err, M_pred, gp_cond)``, where:
+
+            - **gp_mean** (JAXArray) - The GP predictive mean, including the mean function.
+            - **pred_err** (JAXArray) - The estimated predictive standard deviation.
+            - **M_pred** (JAXArray) - The mean function at the prediction locations.
+            - **gp_cond** (GP) - A GP object describing the conditional (predictive) distribution at the
+              prediction locations, which takes ``p_pred`` as its parameters.
+
         """
         if self.dim != 1 and self.dim != 2:
             raise Exception(f"GP prediction only implemented for 1D and 2D GPs, not {self.dim} dimensions")
@@ -549,6 +767,7 @@ class GP(object):
             else:
                 raise Exception("fast_dim keyword argument must be None, 0 or 1")
         else:
+            X_pred = list(X_pred)
             pred_loc_equals_obs = False
 
     
@@ -658,6 +877,28 @@ class GP(object):
             Y,
             return_mf = False,
     ):
+        r"""Computes the GP predictive mean at the observed locations.
+
+        .. math::
+
+            \mathbb{E}[\vec{y}] = \vec{\mu} + \mathbf{K}_{\mathrm{nw}} \mathbf{K}^{-1} (\vec{y} - \vec{\mu})
+
+        where :math:`\mathbf{K}_{\mathrm{nw}}` is the covariance matrix without white noise. Faster than
+        :meth:`predict` when only the fit at the observed locations is needed, and used by :meth:`plot`.
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            return_mf (bool, optional): Whether to also return the mean function. Defaults to ``False``.
+
+        Returns:
+            JAXArray or (JAXArray, JAXArray): The GP predictive mean (including the mean function), with
+            shape ``GP.data_shape``. If ``return_mf = True``, a tuple of the GP predictive mean and the mean
+            function.
+
+        """
         # Perform GP regression at the observed data locations
         M = self.mf(p, self.x)
         
@@ -686,65 +927,59 @@ class GP(object):
         logP_fn: Optional[Callable] = None,
         hessian_mat: Optional[JAXArray] = None,
     ) -> Tuple[Union[PyTree, JAXArray], list]:
-        r"""Computes the Laplace approximation at the location of ``p`` with options to regularise
-        values which are poorly constrained. The parameters in ``p`` should be best-fit values of the posterior.
-        
-        The Laplace approximation is an estimate of the posterior distribution at the location of best-fit.
-        It assumes the best-fit location is the mean of the Gaussian and calculates the covariance matrix
-        based on approximating the value of the Hessian at the location of best-fit. By taking the negative
-        inverse of the Hessian matrix this should give an approximate covariance matrix assuming the posterior
-        is close to a Gaussian distribution. It is equivalent to a second-order Taylor series approximation of
-        the posterior at the location of best-fit.
-        
-        The Laplace approximation is useful to get a quick approximation of the posterior without having to
-        run an expensive MCMC calculation. Can also be useful for initialising MCMC inference with a good
-        tuning matrix when large numbers of parameters which may contain strong correlations are being sampled.
-        
+        r"""Computes the Laplace approximation of the posterior at the location of ``p``, which should
+        be the best-fit (maximum a posteriori) parameters.
+
+        The Laplace approximation is a Gaussian approximation of the posterior centred on the best fit. Its
+        covariance matrix is the negative inverse of the Hessian of the log posterior at the best fit, which is
+        equivalent to a second-order Taylor series approximation of the log posterior. It gives a quick estimate
+        of the posterior without running MCMC, and is also useful for initialising MCMC with a good tuning
+        matrix when many correlated parameters are being sampled.
+
         Note:
-            This calculation can be memory intensive for large data sets with many free parameters and so
-            setting ``large = True`` and ensuring ``large_block_size`` is a low integer can help reduce memory
-            costs by breaking up the hessian calculation into blocks of rows.
-        
+            This calculation can be memory intensive for large data sets with many free parameters. Setting
+            ``large = True`` with a small ``large_block_size`` reduces the memory cost by calculating the
+            Hessian in blocks of rows.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-                Also input to the ``logPrior`` function for the calculation of the log priors.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            regularise (bool, optional): Whether to add a regularisation constant to the diagonal of the hessian matrix
-                corresponding to diagonals which are negative along the diagonals of the resulting covariance matrix.
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function. Also passed to the log prior function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            regularise (bool, optional): Whether to regularise the covariance matrix so it is positive definite.
+                Any eigenvalues of the covariance matrix smaller than ``regularise_const`` times the largest
+                absolute eigenvalue are raised to that value, which handles poorly constrained parameters.
                 Defaults to ``True``.
-            regularise_const (bool, optional): The constant added to diagonals of the hessian matrix to regularise it
-                given that regularise is set to ``True``. Defaults to 100.
-            vars (:obj:`list` of :obj:`str`, optional): The ``list`` of keys names corresponding to
-                the parameters we want to calculate the Laplace approximation with respect to.
-                The remaining parameters will be assumed to be fixed. If specified in addition to
-                fixed_vars will raise an Exception.
-            fixed_vars (:obj:`list` of :obj:`str`, optional): Alternative to vars, may specify instead
-                the parameters being kept fixed which will not be marginalised over in the Laplace approximation.
-                If specified in addition to vars will raise an Exception.
-            return_array (bool, optional): Whether to return the approximated covariance matrix as a JAXArray or
-                as a nested PyTree where e.g. the covariance between parameters named p1 and p2 is given by
-                ``cov_mat[p1][p2]`` and ``cov_mat[p2][p1]``.
-            large (bool, optional): Calculating the hessian matrix for large data sets with many parameters can be
-                very memory intensive. If this is set to True then the hessian will be calculated in groups of rows
-                instead of all at once which reduces the memory cost but can take significantly longer to run.
-                The calculation is otherwise the same with no approximation made. Defaults to False.
-            large_block_size (int, optional): If large is set to True and the hessian is being calculated in groups of rows
-                can specify how many rows are being calculated simultaneously. Large numbers may calculate the overall hessian
-                faster but at greater memory cost.
-            large_jit (bool, optional): Whether to JIT compile the hessian function when ``large = True``,
-                can speed up the calculation assuming the function can be JIT compiled. Defaults to ``True``.
-            hessian_mat (JAXArray, optional): Instead of calculating the hessian matrix (needed for the Laplace approximation)
-                from the input parameters ``p`` and ``Y`` just provide the hessian matrix directly.
-                Assumed to be a JAXArray and not a PyTree. The input parameters ``p`` and ``Y`` will be ignored.
-        
+            regularise_const (Scalar, optional): The relative size of the smallest eigenvalue allowed when
+                ``regularise = True``. Defaults to ``1e-10``.
+            vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to calculate the Laplace
+                approximation for. All other parameters are kept fixed. Cannot be given together with
+                ``fixed_vars``.
+            fixed_vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to keep fixed, as an
+                alternative to ``vars``. If neither is given, all parameters are included.
+            return_array (bool, optional): Whether to return the covariance matrix as a JAXArray, or as a nested
+                PyTree where the covariance between parameters ``p1`` and ``p2`` is ``cov_mat[p1][p2]``.
+                Defaults to ``False``.
+            large (bool, optional): Whether to calculate the Hessian in blocks of rows to reduce the memory cost
+                (see :func:`luas.convenience_fns.large_hessian_calc`). This can take significantly longer but
+                makes no approximation. Defaults to ``False``.
+            large_block_size (int, optional): The number of rows of the Hessian calculated at once when
+                ``large = True``. Larger values may be faster but cost more memory. Defaults to 50.
+            large_jit (bool, optional): Whether to JIT compile the Hessian calculation when ``large = True``.
+                Defaults to ``True``.
+            logP_fn (Callable, optional): The function to take the Hessian of, called as ``logP_fn(p, Y)``.
+                Defaults to :meth:`logP_hessianable`.
+            hessian_mat (JAXArray, optional): A Hessian matrix to use instead of calculating it, as a 2D JAXArray
+                ordered as ``jax.flatten_util.ravel_pytree`` orders the parameters being varied. ``Y`` is then
+                not used.
+
         Returns:
-            (JAXArray, :obj:`list` of :obj:`str`) or (PyTree, :obj:`list` of :obj:`str`): Returns a tuple of two elements,
-            if ``return_array = True`` the first element will be the covariance matrix from the Laplace approximation
-            as a JAXArray, otherwise it will be as a nested PyTree. The second element will be the order of the parameters
-            in the returned covariance matrix if it is a JAXArray. This list is also returned when ``return_array = False``
-            for consistency. The order of the list matches how ``jax.flatten_util.ravel_pytree`` will order keys from a PyTree.
-        
+            (JAXArray, :obj:`list` of :obj:`str`) or (PyTree, :obj:`list` of :obj:`str`): A tuple of the
+            covariance matrix of the Laplace approximation (as a JAXArray if ``return_array = True``, otherwise
+            as a nested PyTree) and the list of parameter names in the order they appear in the JAXArray. The
+            list matches how ``jax.flatten_util.ravel_pytree`` orders the parameters and is returned in both
+            cases for consistency.
+
         """
         
         if logP_fn is None:
@@ -771,7 +1006,7 @@ class GP(object):
                 hessian_mat = jax.hessian(logP_hessianable_wrapper)(p_vary)
                 
                 # For inverting to a covariance matrix we need to convert the nested PyTree returned by
-                # jax.hessian into a matrix which we can do with this helper function from luas.jax_convenience_fns
+                # jax.hessian into a matrix which we can do with this helper function from luas.convenience_fns
                 hessian_mat = pytree_to_array_2D(p_vary, hessian_mat)
                 
         # Help symmetrise matrix which can help mitigate numerical errors
@@ -812,48 +1047,48 @@ class GP(object):
         large_jit: Optional[bool] = True,
         **kwargs,
     ) -> Tuple[Union[PyTree, JAXArray], list]:
-        """Computes the Laplace approximation at the location of ``p`` but within the transformed
-        parameter space used by ``PyMC`` and ``NumPyro`` to deal with parameters bounded by a lower and upper bound.
-        
+        r"""Computes the Laplace approximation at the location of ``p`` in the unbounded space that
+        ``PyMC`` and ``NumPyro`` sample bounded parameters in.
+
+        ``PyMC`` and ``NumPyro`` sample a parameter bounded between :math:`a` and :math:`b` as an unbounded
+        variable :math:`x`, which is mapped to the bounded parameter using a sigmoid transform (see
+        :func:`luas.convenience_fns.transf_from_unbounded`). This method calculates the Laplace approximation
+        with respect to these unbounded variables, including the log Jacobian of the transform, so the result
+        can be used as a tuning matrix for sampling with these libraries.
+
+        See :meth:`laplace_approx` for more details about the Laplace approximation.
+
         Example:
-            ``param_bounds`` should be of the form ``param_bounds[par] = [lower_bound, upper_bound]`` where
-            ``lower_bound`` and ``upper_bound`` are of the same shape as ``p[par]``.
-        
-        See ``GP.laplace_approx`` for more details about the Laplace approximation.
-        
+            ``param_bounds`` should be of the form ``param_bounds[par] = [lower_bound, upper_bound]``, where
+            ``lower_bound`` and ``upper_bound`` have the same shape as ``p[par]``.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-                Also input to the ``logPrior`` function for the calculation of the log priors.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            param_bounds (PyTree): Contains any bounds for the parameters in ``p``.
-            vars (:obj:`list` of :obj:`str`, optional): The ``list`` of key names corresponding to
-                the parameters we want to calculate the Laplace approximation with respect to.
-                The remaining parameters will be assumed to be fixed. If specified in addition to
-                fixed_vars will raise an Exception.
-            fixed_vars (:obj:`list` of :obj:`str`, optional): Alternative to vars, may specify instead
-                the parameters being kept fixed which will not be marginalised over in the Laplace approximation.
-                If specified in addition to vars will raise an ``Exception``.
-            large (bool, optional): Calculating the hessian matrix for large data sets with many parameters can be
-                very memory intensive. If this is set to True then the hessian will be calculated in groups of rows
-                instead of all at once which reduces the memory cost but can take significantly longer to run.
-                The calculation is otherwise the same with no approximation made. Defaults to ``False``.
-            large_block_size (int, optional): If large is set to True and the hessian is being calculated in groups of rows
-                can specify how many rows are being calculated simultaneously. Large numbers may calculate the overall hessian
-                faster but at greater memory cost.
-            large_jit (bool, optional): Whether to JIT compile the hessian function when ``large = True``,
-                can speed up the calculation assuming the function can be JIT compiled. Defaults to ``True``.
-            return_array (bool, optional): Whether to return the approximated covariance matrix as a JAXArray or
-                as a nested PyTree where e.g. the covariance between parameters named p1 and p2 is given by
-                ``cov_mat[p1][p2]`` and ``cov_mat[p2][p1]``.
-                
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function. Also passed to the log prior function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            param_bounds (PyTree): Lower and upper bounds for any of the parameters in ``p``.
+            vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to calculate the Laplace
+                approximation for. All other parameters are kept fixed. Cannot be given together with
+                ``fixed_vars``.
+            fixed_vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to keep fixed, as an
+                alternative to ``vars``. If neither is given, all parameters are included.
+            large (bool, optional): Whether to calculate the Hessian in blocks of rows to reduce the memory cost.
+                Defaults to ``False``.
+            large_block_size (int, optional): The number of rows of the Hessian calculated at once when
+                ``large = True``. Defaults to 50.
+            return_array (bool, optional): Whether to return the covariance matrix as a JAXArray, or as a nested
+                PyTree. Defaults to ``False``.
+            large_jit (bool, optional): Whether to JIT compile the Hessian calculation when ``large = True``.
+                Defaults to ``True``.
+            **kwargs: Passed to :meth:`laplace_approx`, e.g. ``regularise``.
+
         Returns:
-            (JAXArray, :obj:`list` of :obj:`str`) or (PyTree, :obj:`list` of :obj:`str`): Returns a tuple of two elements,
-            if ``return_array = True`` the first element will be the covariance matrix from the Laplace approximation
-            as a JAXArray, otherwise it will be as a nested PyTree. The second element will be the order of the parameters
-            in the returned covariance matrix if it is a JAXArray. This list is also returned when ``return_array = False``
-            for consistency. The order of the list matches how ``jax.flatten_util.ravel_pytree`` will order keys from a PyTree.
-            
+            (JAXArray, :obj:`list` of :obj:`str`) or (PyTree, :obj:`list` of :obj:`str`): A tuple of the
+            covariance matrix of the Laplace approximation with respect to the unbounded variables (as a JAXArray
+            if ``return_array = True``, otherwise as a nested PyTree) and the list of parameter names in the order
+            they appear in the JAXArray.
+
         """
 
         # This function returns a PyTree p_vary which has only the (key, value) pairs of
@@ -924,32 +1159,31 @@ class GP(object):
         axes_labels = None,
         return_fig = False,
     ) -> plt.Figure:
-        r"""Visualise the covariance matrix/matrices generated by the input hyperparameters.
-        
-        Note:
-            Default behaviour is to separately visualise each of the component covariance matrices in each dimension.
-            For example, ``Sl``, ``St``, ``Kl`` and ``Kt`` for the 2D `LuasKernel` or `LuasLasrachKernel`.
-            If ``full = True`` then it will instead build the full covariance matrix ``K``, but this is very
-            memory intensive as it requires creating a JAXArray with ``(N_l*N_t, N_l*N_t)`` entries 
-            (and is not currently implemented)! For 1D GPs this will simply generate the full covariance matrix.
-        
+        r"""Plots the covariance matrices along each dimension built from the parameters.
+
+        For 1D data this plots the full covariance matrix. For 2D (or higher) data each column of the figure
+        is one dimension, with the first row showing the :math:`\mathbf{\Sigma}` (noise) matrix along that
+        dimension and each following row showing the matrix from one of the other Kronecker terms. This needs
+        a Kronecker kernel class which stores these matrices (e.g. ``luas.LuasKernel``).
+
         Args:
-            hp (Pytree): Hyperparameters needed to build the covariance matrices
-                ``Kl``, ``Kt``, ``Sl``, ``St``. Will be unaffected if additional mean function
-                parameters are also included.
-            corr (bool, optional): If ``True`` will plot the correlation between points instead of the
-                covariance. Defaults to ``False``.
-            wn (bool, optional): Whether to include white noise in the calculation of covariance.
-                Defaults to ``True``.
-            x_plot (JAXArray | tuple, optional): The values on the axes used by ``plt.pcolormesh`` for the plot.
-                If not included, will default to the input vector(s) in ``X`` during GP object intialisation.
-                If these input vectors consist of multiple regression vectors i.e. of shape ``(d, N)``, 
-                then the first vector will be used.
-            full (bool, optional): If ``True`` will build and visualise the full constructed covariance matrix
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function. Any extra
+                parameters (e.g. for the mean function) are ignored.
+            corr (bool, optional): If ``True``, plot correlation matrices instead of covariance matrices.
+                Defaults to ``False``.
+            wn (bool, optional): Whether to include white noise in the covariance matrices. Defaults to ``True``.
+            x_plot (tuple, optional): The values along each axis used by ``plt.pcolormesh``, with one JAXArray
+                per dimension. Defaults to the input locations the GP was created with (the first row, if there
+                are several input variables along a dimension).
+            full (bool, optional): Plotting the full covariance matrix of a 2D data set is not implemented, so
+                this must be ``False``.
+            axes_labels (:obj:`list` of :obj:`str`, optional): Axis labels for each dimension. Defaults to
+                ``$x_1$``, ``$x_2$``, ...
+            return_fig (bool, optional): Whether to return the figure. Defaults to ``False``.
+
         Returns:
-            plt.Figure: A figure displaying each of the component covariance matrices in the Kronecker product model.
-        
+            plt.Figure: The figure, if ``return_fig = True``.
+
         """
     
         # If no x and y axes for the plots specified, defaults to x_l, x_t
@@ -1027,28 +1261,37 @@ class GP(object):
         sharey = None,
         **fig_kwargs,
     ) -> plt.Figure:
-        """Visualises the fit to the data. Displays the observed data as well as the mean function,
-        the GP predictive mean (not including the mean function) and the residuals of the data
-        after subtraction of the GP predictive mean (including the mean function).
-        
-        For a good fit to the data, the data minus the GP predictive mean should consist of
-        white noise with no remaining correlations. The GP predictive mean (not including the mean function)
-        should also just be fitting correlated noise and should not look like its fitting the mean function.
-        
+        r"""Visualises the fit to the data.
+
+        Plots four panels: the observed data, the mean function, the GP predictive mean without the mean
+        function, and the residuals after subtracting the GP predictive mean (including the mean function).
+        For 1D data the first panel also overlays the mean function and the GP predictive mean on the data.
+        For 2D data each panel is a ``plt.pcolormesh`` image.
+
+        For a good fit, the residuals should look like white noise with no remaining correlations, and the
+        GP predictive mean without the mean function should only be fitting correlated noise, not structure
+        which belongs in the mean function.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            x_l_plot (JAXArray, optional): The values on the y-axis used by ``plt.pcolormesh`` for the plot.
-                If not included will default to ``x_l`` if ``x_l`` is of shape ``(N_l,)`` or to ``x_l[0, :]``
-                if ``x_l`` is of shape ``(d_l, N_l)``.
-            x_t_plot (JAXArray, optional): The values on the x-axis used by ``plt.pcolormesh`` for the plot.
-                If not included will default to ``x_t`` if ``x_t`` is of shape ``(N_t,)`` or to ``x_t[0, :]``
-                if ``x_t`` is of shape ``(d_t, N_t)``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function and any
+                parameters needed by the mean function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``).
+            x_plot (tuple, optional): The values along each axis of the plot, with one JAXArray per dimension.
+                Defaults to the input locations the GP was created with (the first row, if there are several
+                input variables along a dimension).
+            return_fig (bool, optional): Whether to return the figure. Defaults to ``False``.
+            return_fit (bool, optional): Whether to return the GP predictive mean and mean function (only if
+                ``return_fig = False``). Defaults to ``False``.
+            axes_labels (:obj:`list` of :obj:`str`, optional): Axis labels for each dimension.
+                Defaults to ``["$x_1$", "$x_2$"]``.
+            sharey (bool, optional): Whether the panels share a y-axis. Defaults to ``False`` for 1D data and
+                ``True`` for 2D data.
+            **fig_kwargs: Passed to ``plt.figure``.
+
         Returns:
-            plt.Figure: The figure object containing the plot produced.
-            
+            plt.Figure or (JAXArray, JAXArray): The figure if ``return_fig = True``, or a tuple of the GP
+            predictive mean and the mean function if ``return_fit = True``. Otherwise nothing is returned.
+
         """
         
         # If no x and y axes for the plots specified, defaults to x_l, x_t
@@ -1122,7 +1365,30 @@ class GP(object):
     
     def plot_lightcurves(self, p, Y, sep = None, time_dim = 1, xlabel = r"Time", ylabel = "Values + offset", bin = None,
                          figsize = (12, 8), sharey = True, **fig_kwargs):
-        """Quick function to visualise light curves and the residuals after subtraction of transit model
+        r"""Plots each row of a 2D data set as a light curve, with the fit and the residuals.
+
+        Plots three panels with the light curves offset vertically from each other: the data with the mean
+        function (dashed) and the GP predictive mean (solid); the data and the GP predictive mean after
+        subtracting the mean function; and the residuals after subtracting the GP predictive mean.
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function and any
+                parameters needed by the mean function.
+            Y (JAXArray): Observed data, with shape ``(N_l, N_t)``.
+            sep (Scalar, optional): The vertical offset between light curves. Defaults to four times the
+                largest standard deviation of any light curve.
+            time_dim (int, optional): Which dimension of the data is time (0 or 1). Defaults to 1.
+            xlabel (str, optional): Label of the x-axis. Defaults to ``"Time"``.
+            ylabel (str, optional): Label of the y-axis. Defaults to ``"Values + offset"``.
+            bin (tuple, optional): Bin sizes ``(l_bin, t_bin)`` to bin the data along each dimension before
+                plotting (see :func:`luas.convenience_fns.bin_data_2D`).
+            figsize (tuple, optional): Figure size. Defaults to ``(12, 8)``.
+            sharey (bool, optional): Whether the panels share a y-axis. Defaults to ``True``.
+            **fig_kwargs: Passed to ``plt.subplots``.
+
+        Returns:
+            plt.Figure: The figure.
+
         """
 
         if self.dim != 2:
@@ -1133,7 +1399,7 @@ class GP(object):
         if bin is not None:
             _, _, Y = bin_data_2D(self.x[0], self.x[1], Y, bin[0], bin[1])
             _, _, M = bin_data_2D(self.x[0], self.x[1], M, bin[0], bin[1])
-            x_bin0, x_bin1, gp_mean = bin_data_2D(X[0], X[1], gp_mean, bin[0], bin[1])
+            x_bin0, x_bin1, gp_mean = bin_data_2D(self.x[0], self.x[1], gp_mean, bin[0], bin[1])
             x_t = [x_bin0, x_bin1][time_dim]
         else:
             x_t = self.x[time_dim]
@@ -1181,54 +1447,43 @@ class GP(object):
         zero_centre: Optional[bool] = False,
         cov: Optional[bool] = False,
     ) -> Union[JAXArray, Tuple[JAXArray, plt.Figure]]:
-        """Performs a quick (and approximate) 2D autocorrelation using ``jax.scipy.signal.correlate2d``
-        on the observed data after subtraction of the GP predictive mean to examine if there is any
-        remaining correlation in the residuals.
-        
+        r"""Calculates (and plots) a quick, approximate 2D autocorrelation of the residuals using
+        ``jax.scipy.signal.correlate2d``, to check if there is any correlation left in the residuals
+        after subtracting the GP predictive mean.
+
+        If ``include_gp_mean = False``, the autocorrelation of the data minus the mean function (without the
+        GP predictive mean) is calculated instead, which can help choose which kernels to fit with.
+        Alternatively any matrix ``mat`` can be given, in which case ``p`` and ``Y`` are not used.
+
         Note:
-            This function also assumes the data is evenly spaced in both dimensions. It is also
-            not an exact autocorrelation as the mean is not subtracted for each set of residuals and therefore
-            it is assumed the residuals always have mean zero. Also instead of dividing by the standard deviations
-            of the specific residuals being multiplied together, all values are divided by the overall variance
-            of the residuals. This can result in some values having correlation lying outside the interval [-1, 1]
-            but runs very efficiently and should be reasonably accurate unless considering correlations between
-            widely separated parts of the data. For this reason, by default only half the separation of the data
-            is visualised in the plots.
-        
-        If ``include_gp_mean = False`` then shows the autocorrelation of the observed data minus
-        the mean function (without the GP predictive mean) which is useful for visualising
-        what kernel function to use when fitting with a GP.
-        
-        Can also just input a general matrix ``mat`` to run an autocorrelation on, in which case the inputs
-        ``p`` and ``Y`` are ignored.
-        
+            This assumes the data is evenly spaced along both dimensions. It is also not an exact
+            autocorrelation: the residuals are assumed to have zero mean, and all values are divided by the
+            overall variance of the residuals rather than by the standard deviations of the specific residuals
+            being multiplied together. This means some values can lie outside the interval [-1, 1], but it is
+            fast and should be reasonably accurate except for widely separated parts of the data. For this
+            reason, only separations up to half the size of the data are plotted by default.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            max_sep_l (int, optional): The maximum separation of wavelengths/rows to visualise the correlation of.
-                This is given as an integer referring to the number of rows apart to show. Defaults to half the
-                number of rows in the observed data ``Y``.
-            max_sep_t (int, optional): The maximum separation of time/columns to visualise the correlation of. This
-                is given as an integer referring to the number of columns apart to show. Defaults to half the
-                number of columns in the observed data ``Y``.
-            include_gp_mean (bool, optional): Whether to subtract the GP predictive mean from the observed data
-                when calculating the residuals. If ``False`` will still subtract the deterministic mean function.
-                Useful for visualising correlation in a data set to aid in kernel choice before fitting with a GP.
-            mat (JAXArray, optional): Instead of using the residuals of the observed data, providing a
-                matrix for this argument will calculate the autocorrelation of this given matrix instead.
-            plot (bool, optional): If ``True`` then will produce a plot visualising the autocorrelation.
-                Defaults to ``True``.
-            zero_centre (bool, optional): Whether to set the correlation at zero separation to 0.
-                Since the correlation at zero separation is always 1 it can make it hard to visualise
-                correlation values which are very small so setting this to ``True`` can aid visualisation.
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function and any
+                parameters needed by the mean function.
+            Y (JAXArray): Observed data, with shape ``(N_l, N_t)``.
+            max_sep_l (int, optional): The largest separation in rows to plot. Defaults to half the number of rows.
+            max_sep_t (int, optional): The largest separation in columns to plot. Defaults to half the number of
+                columns.
+            include_gp_mean (bool, optional): Whether to subtract the GP predictive mean as well as the mean
+                function from the data. Defaults to ``True``.
+            mat (JAXArray, optional): A matrix to calculate the autocorrelation of instead of the residuals.
+            plot (bool, optional): Whether to plot the autocorrelation. Defaults to ``True``.
+            plot_kwargs (dict, optional): Passed to ``plt.imshow``, replacing the default plot settings.
+            zero_centre (bool, optional): Whether to set the value at zero separation (which is always 1) to 0,
+                which makes weak correlations at other separations easier to see. Defaults to ``False``.
+            cov (bool, optional): If ``True``, return the autocovariance instead of the autocorrelation.
                 Defaults to ``False``.
-            cov (bool, optional): If ``True`` will return the autocovariance matrix instead.
-            
+
         Returns:
-            JAXArray or (JAXArray, plt.Figure): Returns the autocorrelation matrix of the residuals. If
-            ``plot = True`` then will return a tuple with the generated ``plt.Figure`` also added.
-        
+            JAXArray or (JAXArray, AxesImage): The autocorrelation matrix. If ``plot = True``, a tuple of the
+            autocorrelation matrix and the image returned by ``plt.imshow``.
+
         """
         
         # Sets the maximum separation to visualise the autocorrelation for
@@ -1249,14 +1504,14 @@ class GP(object):
             # For a matrix of residuals will also default to half the length of the data in
             # each dimension
             if max_sep_l is None:
-                max_sep_l = self.N_l//2
+                max_sep_l = self.data_shape[0]//2
             if max_sep_t is None:
-                max_sep_t = self.N_t//2
+                max_sep_t = self.data_shape[1]//2
         
         
             if include_gp_mean:
                 # Perform GP regression
-                gp_mean, sigma_diag, M = self.predict(p, Y)
+                gp_mean = self.gp_mean_calc(p, Y)
             
                 # Includes GP mean fit to data when subtracting from observed data
                 res = Y - gp_mean
@@ -1297,21 +1552,20 @@ class GP(object):
                 # It is assumed if giving values to plot_kwargs that this will be handled by the user
                 
                 # First check if x_l and x_t contain multiple rows in which case pick the top row
-                if self.x_l.ndim > 1:
-                    x_l_plot = self.x_l[:, 0]
+                if self.x.ndim > 1:
+                    x_l_plot = self.x[0][0, :]
                 else:
-                    x_l_plot = self.x_l
+                    x_l_plot = self.x[0]
 
-                if self.x_t.ndim > 1:
-                    x_l_plot = self.x_t[:, 0]
+                if self.x.ndim > 1:
+                    x_t_plot = self.x[1][0, :]
                 else:
-                    x_l_plot = self.x_t
+                    x_t_plot = self.x[1]
 
                 # Calculates the average separation between points along each dimension
-                l_step = x_l_plot.ptp()/(self.N_l-1)
-                t_step = x_l_plot.ptp()/(self.N_t-1)
+                l_step = x_l_plot.ptp()/(x_l_plot.size-1)
+                t_step = x_t_plot.ptp()/(x_t_plot.size-1)
 
-                
                 # Calculate the maximum separations in each dimension in values given in x_l and x_t
                 extent = [t_step*-(max_sep_t+0.5), t_step*(max_sep_t+0.5),
                             l_step*(max_sep_l+0.5), l_step*-(max_sep_l+0.5)]
@@ -1348,17 +1602,30 @@ class GP(object):
         inverse = True,
         transpose = 0,
     ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
+        r"""Applies the transformation the kernel uses along all dimensions except its fast dimension to
+        the residuals of the data.
+
+        Some Kronecker kernel classes (``luas.LuasKernelND``, ``luas.LuasLasrachKernel``,
+        ``luas.ExtendedLuasKernel``, ``luas.MultiLowRankKernel`` and ``luas.DoubleMultiLowRankKernel``) factorise
+        the matrix square root of the covariance matrix as :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}`,
+        where :math:`\mathbf{T}` acts along every dimension except the fast dimension and
+        :math:`\tilde{\mathbf{L}}` acts along the fast dimension. This method subtracts the mean function from
+        ``Y`` and applies :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}` if ``inverse = False``) to the
+        residuals. Useful for looking at the data in the basis the kernel uses.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            inverse (bool, optional): If ``True``, apply :math:`\mathbf{T}^{-1}`, otherwise apply
+                :math:`\mathbf{T}`. Defaults to ``True``.
+            transpose (int, optional): If ``1``, apply the transpose (:math:`\mathbf{T}^{-T}` or
+                :math:`\mathbf{T}^T`) instead. Defaults to ``0``.
+
         Returns:
-            Scalar: The value of the log likelihood.
-            
+            JAXArray: The transformed residuals, with shape ``GP.data_shape``.
+
         """
         
         # Calculate the residuals after subtraction of the deterministic mean function
@@ -1381,6 +1648,18 @@ class GP(object):
         p: PyTree,
         R: JAXArray,
     ) -> Scalar:
+        r"""Multiplies an array by the inverse of the covariance matrix,
+        :math:`\mathbf{K}^{-1} \vec{r}`.
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            R (JAXArray): The array to multiply, with shape ``GP.data_shape``.
+
+        Returns:
+            JAXArray: :math:`\mathbf{K}^{-1} \vec{r}`, with shape ``GP.data_shape``.
+
+        """
         
         self.kf_eval = self.build_kf(p, self.x)
         
@@ -1397,6 +1676,19 @@ class GP(object):
         full = True,
         **kwargs,
     ) -> Scalar:
+        r"""Multiplies an array by the covariance matrix, :math:`\mathbf{K} \vec{r}`.
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            R (JAXArray): The array to multiply, with shape ``GP.data_shape``.
+            full (bool, optional): Whether to use the full covariance matrix. Defaults to ``True``.
+            **kwargs: Passed to the kernel's ``matmul`` method, e.g. ``wn = False`` to leave out white noise.
+
+        Returns:
+            JAXArray: :math:`\mathbf{K} \vec{r}`, with shape ``GP.data_shape``.
+
+        """
         
         self.kf_eval = self.build_kf(p, self.x)
 
@@ -1409,6 +1701,21 @@ class GP(object):
         
 
     def orthogonalise(self, p, A):
+        r"""Removes the non-orthogonal part of a set of low-rank component vectors.
+
+        Only available for ``luas.MultiLowRankKernel``. The columns of ``A`` are whitened by the noise
+        covariance matrix along the dimension other than the fast dimension, orthogonalised using a
+        Householder QR decomposition, and then transformed back.
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            A (JAXArray): The component vectors, with one vector per column.
+
+        Returns:
+            JAXArray: The orthogonalised component vectors, with the same shape as ``A``.
+
+        """
         if self.opt_name == "MultiLowRankKernel":
             self.kf_eval = self.build_kf(p, self.x)
             return self.kf_eval.make_orthogonal(A, self.x)
@@ -1422,6 +1729,22 @@ class GP(object):
         R: JAXArray,
         transpose = 0,
     ) -> Scalar:
+        r"""Multiplies an array by the matrix square root of the covariance matrix,
+        :math:`\mathbf{L} \vec{r}`, where :math:`\mathbf{K} = \mathbf{L} \mathbf{L}^T`.
+
+        If :math:`\vec{z}` is drawn from a standard normal distribution then :math:`\mathbf{L} \vec{z}` is a
+        random sample from the GP (without the mean function).
+
+        Args:
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            R (JAXArray): The array to multiply, with shape ``GP.data_shape``.
+            transpose (int, optional): If ``1``, multiply by :math:`\mathbf{L}^T` instead. Defaults to ``0``.
+
+        Returns:
+            JAXArray: :math:`\mathbf{L} \vec{r}` (or :math:`\mathbf{L}^T \vec{r}`), with shape ``GP.data_shape``.
+
+        """
         
         self.kf_eval = self.build_kf(p, self.x)
         
@@ -1437,17 +1760,22 @@ class GP(object):
         R: JAXArray,
         transpose = 0,
     ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix.
-        
+        r"""Multiplies an array by the inverse of the matrix square root of the covariance matrix,
+        :math:`\mathbf{L}^{-1} \vec{r}`, where :math:`\mathbf{K} = \mathbf{L} \mathbf{L}^T`.
+
+        Applied to the residuals of the data, this whitens them: if the GP model is correct the result should
+        look like independent draws from a standard normal distribution.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            R (JAXArray): The array to multiply, with shape ``GP.data_shape``.
+            transpose (int, optional): If ``1``, multiply by :math:`\mathbf{L}^{-T}` instead. Defaults to ``0``.
+
         Returns:
-            Scalar: The value of the log likelihood.
-            
+            JAXArray: :math:`\mathbf{L}^{-1} \vec{r}` (or :math:`\mathbf{L}^{-T} \vec{r}`), with shape
+            ``GP.data_shape``.
+
         """
         
         self.kf_eval = self.build_kf(p, self.x)
@@ -1464,20 +1792,23 @@ class GP(object):
         p: PyTree,
         Y: JAXArray,
     ) -> Scalar:
-        """Computes the log likelihood without returning any stored values from the
-        decomposition of the covariance matrix. This function is slower for gradient calculations
-        than ``GP.logL`` but is more numerically stable for second-order derivative calculations as
-        required when calculating the hessian. This function still only returns the log likelihood
-        so ``jax.hessian`` must be applied to return the hessian of the log likelihood.
-        
+        r"""Computes the log likelihood in a way which gives accurate second derivatives.
+
+        Returns the same value as :meth:`logL`, but uses a calculation which is more numerically stable for
+        second derivatives such as ``jax.hessian``, at the cost of being slower for gradients. This method
+        only returns the log likelihood, so ``jax.hessian`` must still be applied to it.
+
+        This method is JIT compiled unless the GP was created with ``jit = False``.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+
         Returns:
-            Scalar: The value of the log likelihood.
-            
+            Scalar: The log likelihood.
+
         """
         
         # Subtract mean function from observed data
@@ -1497,25 +1828,26 @@ class GP(object):
         Y: JAXArray,
         stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
-        """Computes the log likelihood and also returns any stored values from the
-        decomposition of the covariance matrix. This function is slower for gradient calculations
-        than ``GP.logL_stored`` but is more numerically stable for second-order derivative calculations as
-        required when calculating the hessian. This function still only returns the log likelihood
-        so jax.hessian must be applied to return the hessian of the log likelihood.
-        
+        r"""Computes the log likelihood in a way which gives accurate second derivatives, and also
+        returns values stored from the decomposition of the covariance matrix.
+
+        The ``hessianable`` version of :meth:`logL_stored`. The input ``stored_values`` are passed on to
+        the decomposition and reused by kernels which support this (``luas.LuasKernel`` created with
+        ``use_stored_values = True``).
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
-                values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
-                ``Kernel.decomp_fn``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            stored_values (PyTree): Values stored from a previous decomposition of the covariance
+                matrix, such as the output of a previous call to this method. Their contents depend on
+                the kernel class being used.
+
         Returns:
-            (Scalar, PyTree): A tuple where the first element is the value of the log likelihood.
-            The second element is a PyTree which contains stored values from the decomposition of the
-            covariance matrix.
-            
+            (Scalar, PyTree): A tuple of the log likelihood and the values stored from the decomposition of
+            the covariance matrix.
+
         """
         
         # Subtract mean function from observed data
@@ -1533,21 +1865,24 @@ class GP(object):
         p: PyTree,
         Y: JAXArray,
     ) -> Scalar:
-        """Computes the log posterior without returning any stored values from the
-        decomposition of the covariance matrix. This function is slower for gradient calculations
-        than ``GP.logP`` but is more numerically stable for second-order derivative calculations as
-        required when calculating the hessian. This function still only returns the log posterior
-        so jax.hessian must be applied to return the hessian of the log posterior.
-        
+        r"""Computes the log posterior in a way which gives accurate second derivatives.
+
+        Returns the same value as :meth:`logP`, but uses a calculation which is more numerically stable for
+        second derivatives such as ``jax.hessian``, at the cost of being slower for gradients. Used by
+        :meth:`laplace_approx`. This method only returns the log posterior, so ``jax.hessian`` must still be
+        applied to it.
+
+        This method is JIT compiled unless the GP was created with ``jit = False``.
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-                Also input to the logPrior function for the calculation of the log priors.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function. Also passed to the log prior function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+
         Returns:
-            Scalar: The value of the log posterior.
-            
+            Scalar: The log posterior.
+
         """
         
         logPrior = self.logPrior(p, self.x)
@@ -1567,29 +1902,26 @@ class GP(object):
         Y: JAXArray,
         stored_values: PyTree,
     ) -> Tuple[Scalar, PyTree]:
-        """Computes the log posterior and also returns any stored values from the decomposition of the
-        covariance matrix.
-        
-        Note: 
-            This function is slower for gradient calculations than ``GP.logP_stored`` but is more numerically
-            stable for second-order derivative calculations as required when calculating the hessian.
-            This function still only returns the log posterior so ``jax.hessian`` must be applied to return
-            the hessian of the log posterior.
-        
+        r"""Computes the log posterior in a way which gives accurate second derivatives, and also
+        returns values stored from the decomposition of the covariance matrix.
+
+        The ``hessianable`` version of :meth:`logP_stored`. The input ``stored_values`` are passed on to
+        the decomposition and reused by kernels which support this (``luas.LuasKernel`` created with
+        ``use_stored_values = True``).
+
         Args:
-            p (PyTree): Pytree of hyperparameters used to calculate the covariance matrix
-                in addition to any mean function parameters which may be needed to calculate the mean function.
-                Also input to the logPrior function for the calculation of the log priors.
-            Y (JAXArray): Observed data to fit, must be of shape ``(N_l, N_t)``.
-            stored_values (PyTree): Stored values from the decomposition of the covariance matrix. The specific
-                values contained in this PyTree depend on the choice of :class:`Kernel` object and are returned by
-                ``Kernel.decomp_fn``.
-        
+            p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                and any parameters needed by the mean function. Also passed to the log prior function.
+            Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                e.g. ``(N_l, N_t)`` for 2D data.
+            stored_values (PyTree): Values stored from a previous decomposition of the covariance
+                matrix, such as the output of a previous call to this method. Their contents depend on
+                the kernel class being used.
+
         Returns:
-            (Scalar, PyTree): A tuple where the first element is the value of the log posterior.
-            The second element is a PyTree which contains stored values from the decomposition of the
-            covariance matrix.
-            
+            (Scalar, PyTree): A tuple of the log posterior and the values stored from the decomposition of
+            the covariance matrix.
+
         """
 
         

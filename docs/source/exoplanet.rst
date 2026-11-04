@@ -12,7 +12,6 @@ luas.exoplanet
    transit_light_curve_no_ld
    transit_2D
    eclipse_light_curve
-   eclipse_light_curve_ecc
    eclipse_2D
    ld_from_kipping
    ld_to_kipping

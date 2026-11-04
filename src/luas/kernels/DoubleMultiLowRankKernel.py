@@ -148,6 +148,7 @@ class DoubleMultiLowRankKernel(CovType):
         use_quasi = True,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         
         self.Sigma = Sigma[0], Sigma[1]
         self.K_list = K_list
@@ -164,6 +165,18 @@ class DoubleMultiLowRankKernel(CovType):
 
     
     def _truncated_basis_outer_tensor(self, N_alpha, N_beta, N_t):
+        r"""Builds the basis of :math:`(N_\alpha, N_t)` arrays which are zero except for a single one in one of the first
+        :math:`N_\beta` columns.
+
+        Args:
+            N_alpha (int): The number of low-rank terms along dimension 0.
+            N_beta (int): The number of low-rank terms along dimension 1.
+            N_t (int): The length of dimension 1.
+
+        Returns:
+            JAXArray: The basis, of shape ``(N_alpha * N_beta, N_alpha, N_t)``.
+
+        """
 
         e_alpha = jnp.eye(N_alpha)              # (N_alpha, N_alpha)
         e_t = jax.nn.one_hot(jnp.arange(N_beta), N_t)       # (N_beta, N_t)
@@ -177,6 +190,27 @@ class DoubleMultiLowRankKernel(CovType):
         X: Tuple[JAXArray],
         stored_values: Optional[PyTree] = {},
     ) -> PyTree:
+        r"""Decomposes the covariance matrix.
+
+        Both dimensions are whitened by the noise term, and the low-rank vectors along each dimension are QR
+        decomposed with Householder transformations. The transformed matrix is decomposed as a 2x2 block matrix:
+        the :math:`(N_\alpha N_t, N_\alpha N_t)` A block mixing the kernels of the low-rank terms along dimension 0,
+        the off-diagonal B block, which is only non-zero in the first :math:`N_\beta` columns, and the Schur
+        complement :math:`\mathbf{D} - \mathbf{C}\mathbf{A}^{-1}\mathbf{B}`. The quasiseparable structure is kept if
+        ``use_quasi = True``.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+
+        Returns:
+            (DoubleMultiLowRankKernel, PyTree): Itself and the stored values, including ``"logdet"``.
+
+        Raises:
+            Exception: If any term isn't low rank in exactly one dimension, or if there are at least as many
+                low-rank terms as the length of their dimension.
+
+        """
 
         if self.use_quasi:
             MixingMatTerm = MixingMatQuasisep
@@ -316,6 +350,11 @@ class DoubleMultiLowRankKernel(CovType):
 
     
     def transform_fn(self, R, transpose = 0):
+        r"""Applies the transformation :math:`\mathbf{T}` (or :math:`\mathbf{T}^T` if ``transpose = 1``): along each
+        dimension, the matrix square root of the noise covariance combined with the Householder transformation of
+        that dimension's low-rank vectors. Requires :meth:`decompose` to have been called.
+
+        """
         
         if transpose:
             R_prime = self.Sigma_transf[0].matrix_sqrt(R, transpose = 1)
@@ -337,6 +376,10 @@ class DoubleMultiLowRankKernel(CovType):
 
 
     def inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse transformation :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if ``transpose = 1``),
+        see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.householder_transform_A(R, transpose = 1)
@@ -358,6 +401,19 @@ class DoubleMultiLowRankKernel(CovType):
 
     
     def K_B_matmul(self, X1, X2, R_B, transpose = 0, **kwargs):
+        r"""Multiplies by the off-diagonal B block of the transformed covariance matrix (or its transpose if
+        ``transpose = 1``), using that it is only non-zero in the first :math:`N_\beta` columns. Requires
+        :meth:`decompose` to have been called.
+
+        Args:
+            X1, X2: Not used.
+            R_B (JAXArray): The array to multiply.
+            transpose (int, optional): Whether to multiply by the transpose. Defaults to 0.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         if transpose:
             B_mat = self.B_rows.T
@@ -391,6 +447,11 @@ class DoubleMultiLowRankKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}` (or :math:`\mathbf{L}^T` if
+        ``transpose = 1``), where :math:`\mathbf{T}` is applied by :meth:`transform_fn` and :math:`\tilde{\mathbf{L}}` is the matrix
+        square root of the transformed covariance matrix. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -406,6 +467,10 @@ class DoubleMultiLowRankKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = \tilde{\mathbf{L}}^{-1}\mathbf{T}^{-1}` (or :math:`\mathbf{L}^{-T}` if
+        ``transpose = 1``), see :meth:`matrix_sqrt`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.kf_tilde.matrix_inv_sqrt(R, transpose = 1)
@@ -417,6 +482,19 @@ class DoubleMultiLowRankKernel(CovType):
         return R_prime
        
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying the noise
+        term and every other Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The data-shaped array to multiply.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
 
@@ -427,6 +505,17 @@ class DoubleMultiLowRankKernel(CovType):
 
 
 def as_banded(A, zero_pad_to_len = None):
+    r"""Converts a small dense symmetric matrix into a ``tinygp`` banded quasiseparable matrix, zero-padded to a
+    given length.
+
+    Args:
+        A (JAXArray): The symmetric matrix, of shape ``(n, n)``.
+        zero_pad_to_len (int, optional): The size of the output matrix. Defaults to ``n``.
+
+    Returns:
+        SymmQSM: The banded matrix, with ``A`` in its top-left corner and zeros elsewhere.
+
+    """
     # Assumes matrix is symmetric
 
     N = A.shape[1]

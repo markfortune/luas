@@ -129,6 +129,7 @@ class ExtendedLuasKernel(CovType):
         use_stored_values: Optional[bool] = False,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         
         self.Sigma = Sigma[0], Sigma[1]
         self.K_list = K_list
@@ -148,6 +149,25 @@ class ExtendedLuasKernel(CovType):
         X: Tuple[JAXArray],
         stored_values: Optional[PyTree] = {},
     ) -> PyTree:
+        r"""Decomposes the covariance matrix.
+
+        Both dimensions are whitened by the noise term, and the low-rank vectors along each dimension are
+        transformed with a Householder QL decomposition. The transformed matrix is decomposed as a 2x2 block
+        matrix: the A block with :class:`luas.LuasPlusMultiLowRankKernel`, and the Schur complement
+        :math:`\mathbf{D} - \mathbf{C}\mathbf{A}^{-1}\mathbf{B}` as a general matrix, exploiting the sparsity of the
+        off-diagonal blocks.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+
+        Returns:
+            (ExtendedLuasKernel, PyTree): Itself and the stored values, including ``"logdet"``.
+
+        Raises:
+            Exception: Unless :math:`0 < N_\alpha < N_\lambda` and :math:`0 < N_\beta < N_t`.
+
+        """
 
         self.N_l = X[0].shape[-1]
         self.N_t = X[1].shape[-1]
@@ -291,6 +311,20 @@ class ExtendedLuasKernel(CovType):
         transpose = 0,
         **kwargs,
     ) -> JAXArray:
+        r"""Multiplies by the off-diagonal B block of the transformed covariance matrix (or its transpose if
+        ``transpose = 1``) without building it: the full-rank 2D term plus the low-rank terms along dimension 1,
+        which only affect the last :math:`N_\beta` columns. Requires :meth:`decompose` to have been called.
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns.
+            R (JAXArray): The array to multiply.
+            transpose (int, optional): Whether to multiply by the transpose. Defaults to 0.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         if transpose:
             R_prime = self.K_transf0_B.T @ R
@@ -414,6 +448,10 @@ class ExtendedLuasKernel(CovType):
     
     
     def kf_B_eval(self, X1, X2):
+        r"""Builds the off-diagonal B block of the transformed covariance matrix as a dense matrix (see
+        :meth:`K_B_matmul`).
+
+        """
         K_B = jnp.kron(self.K_transf0_B, self.K_transf[1].evaluate(X1[1], X2[1])) 
         
         for j in range(self.N_beta):
@@ -425,6 +463,11 @@ class ExtendedLuasKernel(CovType):
     
 
     def transform_fn(self, R, transpose = 0):
+        r"""Applies the transformation :math:`\mathbf{T}` (or :math:`\mathbf{T}^T` if ``transpose = 1``): along each
+        dimension, the matrix square root of the noise covariance combined with the Householder transformation of
+        that dimension's low-rank vectors. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.Sigma_transf[0].matrix_sqrt(R, transpose = 1)
@@ -446,6 +489,10 @@ class ExtendedLuasKernel(CovType):
 
 
     def inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse transformation :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if ``transpose = 1``),
+        see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
         
         if transpose:
             R_prime = self.householder_transform_A(R, transpose = 1)
@@ -471,6 +518,11 @@ class ExtendedLuasKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}` (or :math:`\mathbf{L}^T` if
+        ``transpose = 1``), where :math:`\mathbf{T}` is applied by :meth:`transform_fn` and :math:`\tilde{\mathbf{L}}` is the matrix
+        square root of the transformed covariance matrix. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -487,6 +539,10 @@ class ExtendedLuasKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = \tilde{\mathbf{L}}^{-1}\mathbf{T}^{-1}` (or :math:`\mathbf{L}^{-T}` if
+        ``transpose = 1``), see :meth:`matrix_sqrt`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.kf_tilde.matrix_inv_sqrt(R, transpose = 1)
@@ -499,6 +555,19 @@ class ExtendedLuasKernel(CovType):
        
 
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying the noise
+        term and every other Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The data-shaped array to multiply.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
 

@@ -39,6 +39,7 @@ class LuasKernelND(CovType):
         use_stored_values: Optional[bool] = False,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         
         self.Sigma = Sigma
         self.K = K
@@ -55,6 +56,18 @@ class LuasKernelND(CovType):
             self.decompose = self.decompose_no_stored_values
     
     def evaluate(self, X, **kwargs):
+        r"""Builds the full dense covariance matrix by evaluating each Kronecker term and summing them. Only
+        practical for small data sets, as the matrix has :math:`N^2` entries for :math:`N` data points.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            **kwargs: Passed to each covariance object's ``evaluate`` method, e.g. ``wn``.
+
+        Returns:
+            JAXArray: The covariance matrix, of shape ``(N, N)``, ordered as the row-major (``"C"``) flattening
+            of the data array.
+
+        """
 
         dim = len(X)
         Sigma = self.Sigma[0].evaluate(X[0], X[0], **kwargs)
@@ -78,6 +91,23 @@ class LuasKernelND(CovType):
         idx = None,
         **kwargs,
     ) -> PyTree:
+        r"""Decomposes the covariance matrix. Along each dimension :math:`d`, :math:`\mathbf{\Sigma}_d` is decomposed,
+        :math:`\mathbf{K}_d` is whitened by it (:math:`\tilde{\mathbf{K}}_d = \mathbf{L}_d^{-1}\mathbf{K}_d\mathbf{L}_d^{-T}`)
+        and :math:`\tilde{\mathbf{K}}_d` is eigendecomposed. The covariance matrix is then diagonal in the
+        transformed basis, with diagonal :math:`\bigotimes_d \vec{\lambda}_d + 1`.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+            full (bool, optional): Whether to decompose the full matrices along each dimension, otherwise the
+                sub-matrices given by ``idx``. Defaults to ``True``.
+            idx (tuple, optional): Indices along each dimension if ``full = False``.
+
+        Returns:
+            (LuasKernelND, PyTree): Itself and the stored values, including ``"logdet"`` and the eigenvalues
+            ``"lam_d"`` and eigenvectors ``"Q_d"`` along each dimension.
+
+        """
 
         total_size = calc_total_size(X)
 
@@ -129,6 +159,13 @@ class LuasKernelND(CovType):
 
 
     def transform_fn(self, R, transpose = 0):
+        r"""Applies the transformation :math:`\mathbf{T} = \bigotimes_d \mathbf{L}_d\mathbf{Q}_d` (or
+        :math:`\mathbf{T}^T` if ``transpose = 1``) to ``R``, where :math:`\mathbf{L}_d` is the matrix square root of
+        :math:`\mathbf{\Sigma}_d` and :math:`\mathbf{Q}_d` the eigenvectors of :math:`\tilde{\mathbf{K}}_d`. The
+        matrix square root of the covariance matrix is :math:`\mathbf{T}\,(\mathbf{\Lambda} + \mathbf{I})^{1/2}`.
+        Requires :meth:`decompose` to have been called.
+
+        """
         
         R_prime = cyclic_transpose(R, 2)
 
@@ -149,6 +186,10 @@ class LuasKernelND(CovType):
 
 
     def inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse transformation :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if ``transpose = 1``),
+        see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
         R_prime = cyclic_transpose(R, 2)
 
         if transpose:
@@ -171,6 +212,10 @@ class LuasKernelND(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}(\mathbf{\Lambda} + \mathbf{I})^{1/2}`
+        (or :math:`\mathbf{L}^T` if ``transpose = 1``). Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -187,6 +232,10 @@ class LuasKernelND(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = (\mathbf{\Lambda} + \mathbf{I})^{-1/2}\mathbf{T}^{-1}` (or
+        :math:`\mathbf{L}^{-T}` if ``transpose = 1``). Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.kf_tilde.matrix_inv_sqrt(R, transpose = 1)
@@ -199,6 +248,19 @@ class LuasKernelND(CovType):
 
 
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying each
+        Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The array to multiply, with one axis per dimension.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product, with one axis per dimension.
+
+        """
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
         K_R += tensor_mult(self.K, X1, X2, R, **kwargs)

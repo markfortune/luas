@@ -6,8 +6,36 @@ import jax.numpy as jnp
 import tinygp
 
 class MixingMatQuasisep(CovType):
+    r"""Covariance matrix of a linear model of coregionalisation: a sum of Kronecker products of a rank-one
+    mixing term along one dimension and a kernel along ``fast_dim``, plus a diagonal and an optional noise model,
+
+    .. math::
+
+        \mathbf{K} = \sum_i \vec{m}_i\vec{m}_i^T \otimes \mathbf{K}_i + \mathrm{diag}(\vec{d} + \vec{d}_{\mathrm{wn}}) [+ \mathbf{N}],
+
+    where :math:`\vec{m}_i` is column :math:`i` of the mixing matrix. Kept quasiseparable with the multiband method of Gordon et al. (2020), so it is decomposed in linear time. Used by the low-rank Kronecker
+    kernels for the dense part of their decomposition.
+
+    Warning:
+        Internal to ``luas`` and not intended to be used directly. The interface is not stable and may change
+        without notice.
+
+    Args:
+        mixing_mat (JAXArray): The mixing matrix, of shape ``(N_mix, rank)``.
+        kernel_list (list[CovType]): The covariance object :math:`\mathbf{K}_i` along ``fast_dim`` for each column.
+        noise_model (optional): An extra matrix :math:`\mathbf{N}` added to the covariance (a ``tinygp`` ``SymmQSM``).
+        diag (JAXArray | Scalar, optional): Value(s) added to the diagonal. Defaults to 0.
+        wn_diag (JAXArray | Scalar, optional): White noise value(s) added to the diagonal, only included when
+            ``wn = True``. Defaults to 0.
+        params (optional): Metadata about the parameters the object depends on.
+        fast_dim (int, optional): The dimension the kernels run along. Defaults to 1.
+        use_block (bool, optional): Whether to use ``tinygp``'s block representation when kernels are summed.
+            Defaults to ``True``.
+
+    """
     def __init__(self, mixing_mat, kernel_list, noise_model = None,
                  diag = 0., wn_diag = 0., params = None, fast_dim = 1, use_block = True, **kwargs):
+        r"""Creates the object, see the class docstring for the arguments."""
         self.mixing_mat = mixing_mat # shape [N_l, N_alpha]
         self.kernel_list = kernel_list # N_alpha list of tinygp kernel functions
         self.diag = diag
@@ -20,12 +48,14 @@ class MixingMatQuasisep(CovType):
         self.opt_name = "Gordon et al. (2020)/tinygp method"
     
     def _flatten_R(self, R):
+        r"""Flattens a 2D array into a vector in the order the rows and columns of the matrix are stored in."""
         if self.fast_dim == 0:
             return R.ravel("C")
         else:
             return R.ravel("F")
 
     def _reshape_R(self, r, R_shape):
+        r"""Reshapes a vector back into a 2D array of shape ``R_shape``, inverting :meth:`_flatten_R`."""
         if self.fast_dim == 0:
             return r.reshape(R_shape, order='C')
         else:
@@ -33,6 +63,10 @@ class MixingMatQuasisep(CovType):
         
 
     def _tinygp_coords(self, X, full = False, idx = (None, None)):
+        r"""Builds the ``(x, index)`` coordinates for the multiband ``tinygp`` kernel: each input location along
+        ``fast_dim`` repeated for every row of the mixing matrix, with interleaved indices.
+
+        """
         # assert full or idx is not None
 
         cel_vec = X[self.fast_dim]
@@ -49,6 +83,13 @@ class MixingMatQuasisep(CovType):
 
 
     def _to_symm_qsm(self, X, wn = True, full = False, idx = (None, None)):
+        r"""Builds the matrix as a ``tinygp`` ``SymmQSM``: a ``Multiband`` kernel for each column of the mixing matrix,
+        summed, plus the diagonal and noise model.
+
+        Returns:
+            SymmQSM: The symmetric quasiseparable matrix.
+
+        """
         
         for i in range(self.rank):
             if i == 0:
@@ -76,6 +117,12 @@ class MixingMatQuasisep(CovType):
         
 
     def decompose(self, X, wn = True, **kwargs):
+        r"""Calculates the quasiseparable Cholesky decomposition and the log determinant.
+
+        Returns:
+            (MixingMatQuasisep, dict): Itself and the stored value ``"logdet"``.
+
+        """
 
         self.quasi_mat = self._to_symm_qsm(X, wn = wn, **kwargs)
         self.factor = self.quasi_mat.cholesky()
@@ -85,6 +132,25 @@ class MixingMatQuasisep(CovType):
         
 
     def evaluate(self, X1, X2, row_idx = None, col_idx = None, full = False, wn = True, flip_kron = False, calc_diag = True):
+        r"""Evaluates the dense covariance matrix (or the sub-matrix given by ``row_idx`` and ``col_idx``).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns.
+            row_idx, col_idx (tuple, optional): Indices along each dimension if ``full = False``.
+            full (bool, optional): Whether to evaluate the full matrix. Defaults to ``False``.
+            wn (bool, optional): Whether to include ``wn_diag``. Defaults to ``True``.
+            flip_kron (bool, optional): Which dimension is the outer index of the Kronecker products for sub-matrices.
+                Defaults to ``False``.
+            calc_diag (bool, optional): Whether to include the diagonal for sub-matrices. Defaults to ``True``.
+
+        Returns:
+            JAXArray: The covariance matrix.
+
+        Raises:
+            Exception: If a sub-matrix is requested and there is a noise model.
+
+        """
 
         if full:
             # Really not optimised, nor should it be I suppose
@@ -113,7 +179,7 @@ class MixingMatQuasisep(CovType):
                     K_eval = jnp.where(mask, diag_val[ind1[:, None] * mask], 0.0)
 
             if self.noise_model is not None:
-                raise Exception("Not Implemented!")
+                raise Exception("MixingMatQuasisep CovType with noise model cannot be evaluated for non-full covariance matrices")
 
             for i in range(self.rank):
                 K_i_eval = self.kernel_list[i](X1[self.fast_dim], X2[self.fast_dim], full = False,
@@ -141,6 +207,7 @@ class MixingMatQuasisep(CovType):
 
         
     def matrix_inv_sqrt(self, R, transpose=0):
+        r"""Multiplies the 2D array ``R`` by :math:`\mathbf{L}^{-1}` (or :math:`\mathbf{L}^{-T}`), flattening and reshaping it. Requires :meth:`decompose` to have been called."""
         
         R_shape = R.shape
         r = self._flatten_R(R)
@@ -155,6 +222,7 @@ class MixingMatQuasisep(CovType):
         return R_prime
 
     def matrix_sqrt(self, R, transpose=0, **kwargs):
+        r"""Multiplies the 2D array ``R`` by :math:`\mathbf{L}` (or :math:`\mathbf{L}^T`), flattening and reshaping it. Requires :meth:`decompose` to have been called."""
         
         R_shape = R.shape
         r = self._flatten_R(R)
@@ -169,9 +237,16 @@ class MixingMatQuasisep(CovType):
         return R_prime
 
     def inv_sqrt_transform(self, K):
-        raise Exception("Not implemented!")
+        r"""Whitening another covariance object, which is not implemented for this covariance object.
+
+        Raises:
+            Exception: Always.
+
+        """
+        raise Exception("Inv_sqrt_transform not implemented for MixingMatQuasisep CovType")
 
     def scale(self, c):
+        r"""Returns a ``MixingMatQuasisep`` for :math:`c\mathbf{K}`, with the mixing matrix multiplied by :math:`\sqrt{c}`."""
         
         if self.noise_model is not None:
             new_noise_model = self.noise_model * c
@@ -184,6 +259,7 @@ class MixingMatQuasisep(CovType):
                                  fast_dim = self.fast_dim, noise_model = new_noise_model)
 
     def matmul(self, x1, x2, R, wn = True, **kwargs):
+        r"""Multiplies the 2D array ``R`` by the matrix in linear time, flattening and reshaping it."""
 
         R_shape = R.shape
         r = self._flatten_R(R)
@@ -197,6 +273,18 @@ class MixingMatQuasisep(CovType):
     
 
     def householder_transform(self, X, u):
+        r"""Returns the matrix transformed by a Householder reflection with vector ``u`` along ``fast_dim``
+        (see ``covtype.General.householder_transform``), by adding two rank-one terms to each kernel. Note that this
+        modifies ``kernel_list`` in place.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            u (JAXArray): The unit Householder vector along ``fast_dim``.
+
+        Returns:
+            MixingMatQuasisep: The transformed covariance object.
+
+        """
         
         for i in range(self.rank):
             w_i = self.kernel_list[i].matmul(X[self.fast_dim], X[self.fast_dim], u, full = True)
@@ -213,6 +301,13 @@ class MixingMatQuasisep(CovType):
     
 
     def __add__(self, other):
+        r"""Adds another ``MixingMatQuasisep`` with the same ``fast_dim`` and mixing dimension, by joining their mixing matrices and
+        kernel lists.
+
+        Raises:
+            Exception: If ``fast_dim`` or the length of the mixing dimension differ.
+
+        """
 
         if isinstance(other, MixingMatQuasisep):
             if self.fast_dim != other.fast_dim or self.mixing_mat.shape[0] != other.mixing_mat.shape[0]:
@@ -234,7 +329,7 @@ class MixingMatQuasisep(CovType):
                                       fast_dim = self.fast_dim, noise_model = new_noise_model)
             
         else:
-            raise Exception(f"Addition between {type(self).__name__} and {type(other).__name__} not recognised or addition not supported")
+            return NotImplemented
             
         return K_sum
     

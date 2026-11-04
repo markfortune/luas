@@ -27,7 +27,8 @@ Stationary Kernels
 ------------------
 
 Stationary kernels depend only on the distance between two input points. Most
-take a length ``scale`` and an amplitude ``sigma`` (default ``1``).
+take a length scale ``scale``, written as :math:`l` in the equations, and an
+amplitude ``sigma`` (:math:`\sigma`, default ``1``).
 
 .. currentmodule:: luas.kernels
 

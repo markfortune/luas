@@ -117,9 +117,10 @@ class LuasPlusMultiLowRankKernel(CovType):
             more low-rank terms, each as a tuple with one covariance object per
             dimension. Low-rank terms must have a rank-1 outer product (e.g.
             ``luas.kernels.lowrank.Amplitude``) along ``fast_dim``.
-        fast_dim (int, optional): The dimension holding the low-rank vectors, which
-            is also the dimension that can exploit quasiseparable kernels. Defaults
-            to ``1``.
+        fast_dim (int, optional): Relevant if eigen_both is False. 
+            The dimension holding the low-rank vectors, which is also the dimension
+            that can exploit quasiseparable kernels. Defaults
+            to ``1``. Can only be applied to the longest dimension of the dataset.
         never_reduce_dim (bool, optional): Currently unused.
         use_stored_values (bool, optional): Currently unused.
         transform (bool, optional): Internal. If ``False``, the inputs are assumed
@@ -160,6 +161,7 @@ class LuasPlusMultiLowRankKernel(CovType):
         use_pmap = False,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         
         self.Sigma = Sigma[0], Sigma[1]
         self.K_list = K_list
@@ -188,6 +190,17 @@ class LuasPlusMultiLowRankKernel(CovType):
 
 
     def _rotate_to_fast_dim_wrapper(self, fn, fast_dim):
+        r"""Wraps ``fn`` so it is applied with ``fast_dim`` as the first axis of the array, transposing before and
+        after if ``fast_dim = 1``.
+
+        Args:
+            fn (Callable): The function to wrap, ``fn(R, **kwargs)``.
+            fast_dim (int): The dimension to move to the first axis.
+
+        Returns:
+            Callable: The wrapped function.
+
+        """
 
         def wrapped_fn(R, **kwargs):
             if fast_dim == 1:
@@ -204,6 +217,22 @@ class LuasPlusMultiLowRankKernel(CovType):
     
 
     def _calc_C_A_inv_B(self, kf_A_matrix_inv_sqrt, lam_K_tilde, V_K_B, V_Sigma_B):
+        r"""Calculates the correction :math:`\mathbf{C}\mathbf{A}^{-1}\mathbf{B} = (\mathbf{L}_A^{-1}\mathbf{B})^T(\mathbf{L}_A^{-1}\mathbf{B})`
+        used for the Schur complement :math:`\mathbf{D} - \mathbf{C}\mathbf{A}^{-1}\mathbf{B}` of the transformed
+        covariance matrix.
+
+        Args:
+            kf_A_matrix_inv_sqrt (Callable): The inverse matrix square root of the A block, :math:`\mathbf{L}_A^{-1}`.
+            lam_K_tilde (JAXArray): Eigenvalues of the whitened full-rank 2D kernel along the slow dimension.
+            V_K_B (JAXArray): The rows of the transformed full-rank 2D kernel along ``fast_dim`` which couple the A
+                and D blocks.
+            V_Sigma_B (JAXArray): The same rows of the transformed noise covariance along ``fast_dim``.
+
+        Returns:
+            JAXArray: The dense correction, of shape ``(N_alpha * N_slow, N_alpha * N_slow)``, which is only
+            non-zero between entries with the same index along the slow dimension.
+
+        """
 
         # self.V_K_B of shape (N_fast - N_alpha, N_alpha)
         # K_B_nonzero of shape (N_slow, N_alpha, N_fast - N_alpha)
@@ -237,6 +266,29 @@ class LuasPlusMultiLowRankKernel(CovType):
         full = True,
         idx = (None, None),
     ) -> PyTree:
+        r"""Decomposes the covariance matrix.
+
+        Along the slow dimension, the noise covariance and the full-rank 2D kernel are simultaneously diagonalised
+        as in :class:`luas.LuasKernel`. Along ``fast_dim``, the low-rank vectors are transformed with a Householder
+        QL decomposition, which keeps quasiseparable kernels quasiseparable. The transformed matrix is decomposed as
+        a 2x2 block matrix: the large A block either as independent 1D GPs (``eigen_both = False``) or with
+        eigendecompositions in both dimensions (``eigen_both = True``), and the Schur complement
+        :math:`\mathbf{D} - \mathbf{C}\mathbf{A}^{-1}\mathbf{B}` with a general Cholesky decomposition.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+            full (bool, optional): Whether to use the full matrices, otherwise the sub-matrices given by ``idx``.
+                Defaults to ``True``.
+            idx (tuple, optional): Indices along each dimension if ``full = False``.
+
+        Returns:
+            (LuasPlusMultiLowRankKernel, PyTree): Itself and the stored values, including ``"logdet"``.
+
+        Raises:
+            Exception: If there are at least as many low-rank terms as the length of ``fast_dim``.
+
+        """
 
         self.N_slow = X[1-self.fast_dim].shape[-1]
         self.N_fast = X[self.fast_dim].shape[-1]
@@ -382,6 +434,19 @@ class LuasPlusMultiLowRankKernel(CovType):
         transpose = 0,
         **kwargs,
     ) -> JAXArray:
+        r"""Multiplies by the off-diagonal B block of the transformed covariance matrix,
+        :math:`\mathbf{V}_{K,B} \otimes \mathrm{diag}(\vec{\lambda}) + \mathbf{V}_{\Sigma,B} \otimes \mathbf{I}`
+        (or its transpose if ``transpose = 1``), without building it. Requires :meth:`decompose` to have been called.
+
+        Args:
+            X1, X2: Not used.
+            R (JAXArray): The array to multiply.
+            transpose (int, optional): Whether to multiply by the transpose. Defaults to 0.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         if transpose:
             R_prime = self.V_K_B.T @ R 
@@ -395,10 +460,20 @@ class LuasPlusMultiLowRankKernel(CovType):
         return R_prime
     
     def kf_B_eval(self, X1, X2):
+        r"""Builds the off-diagonal B block of the transformed covariance matrix as a dense matrix (see
+        :meth:`K_B_matmul`). ``X1`` and ``X2`` are not used.
+
+        """
         return jnp.kron(self.V_K_B, jnp.diag(self.lam_K_tilde)) + jnp.kron(self.V_Sigma_B, jnp.eye(self.N_slow))
     
 
     def default_transform_fn(self, R, transpose = 0):
+        r"""Applies the default transformation :math:`\mathbf{T}` (or :math:`\mathbf{T}^T` if ``transpose = 1``): along
+        the slow dimension, the matrix square root of the noise covariance times the eigenvectors of the whitened
+        full-rank 2D kernel, and along ``fast_dim`` the Householder transformation of the low-rank vectors. Used as
+        ``transform_fn`` unless another is given. Requires :meth:`decompose` to have been called.
+
+        """
 
         if self.fast_dim == 0:
             R_prime = R.T
@@ -422,6 +497,10 @@ class LuasPlusMultiLowRankKernel(CovType):
 
 
     def default_inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse of the default transformation, :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if
+        ``transpose = 1``), see :meth:`default_transform_fn`. Used as ``inv_transform_fn`` unless another is given.
+
+        """
 
         if self.fast_dim == 0:
             R_prime = R.T
@@ -449,6 +528,11 @@ class LuasPlusMultiLowRankKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}` (or :math:`\mathbf{L}^T` if
+        ``transpose = 1``), where :math:`\mathbf{T}` is applied by :meth:`transform_fn` and :math:`\tilde{\mathbf{L}}` is the matrix
+        square root of the transformed covariance matrix. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -465,6 +549,10 @@ class LuasPlusMultiLowRankKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = \tilde{\mathbf{L}}^{-1}\mathbf{T}^{-1}` (or :math:`\mathbf{L}^{-T}` if
+        ``transpose = 1``), see :meth:`matrix_sqrt`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.kf_tilde.matrix_inv_sqrt(R, transpose = 1)
@@ -477,6 +565,19 @@ class LuasPlusMultiLowRankKernel(CovType):
        
 
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying the noise
+        term and every other Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The data-shaped array to multiply.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
 

@@ -1,8 +1,11 @@
+import warnings
+
 import luas.kernels.covtype as covtype
 from luas.kernels.covtype import CovType, Outer
 from luas.kronecker_fns import calc_data_shape
 from luas.kernel_interface import read_K_list_2D
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar
+import jax.numpy as jnp
 from luas import (
     WhiteNoiseKernel,
     SeparableKernel,
@@ -67,6 +70,10 @@ def kernel_selector(
         if isinstance(kf, covtype.CovType):
             # Just a fixed kernel not given as a function
             build_kf = lambda p, X: kf
+
+            if isinstance(kf, quasisep_cov_list) and bool(jnp.all(jnp.diff(X) >= 0.)) is False:
+                warnings.warn(f"Quasiseparable kernel specified but input data for this dimension is not sorted."\
+                                " This may lead to incorrect results or produce NaNs.")
         
         # or kf not specified at all
         elif kf is None:
@@ -81,8 +88,13 @@ def kernel_selector(
             if isinstance(cov_form, covtype.CovType):
                 # kernel returns a GP optimisation object already
                 build_kf = kf
+                if isinstance(cov_form, quasisep_cov_list) and bool(jnp.all(jnp.diff(X) >= 0.)) is False:
+                    warnings.warn(f"Quasiseparable kernel specified but input data for this dimension is not sorted."\
+                                    " This may lead to incorrect results or produce NaNs.")
             else:
-                assert isinstance(cov_form, tuple) # kf must return a kernel object or tuple(s)
+                if not isinstance(cov_form, tuple):
+                    raise Exception("Kernel function kf must return a CovType object, or a tuple of CovType objects for >1D data")
+                
                 use_kernel, new_kernel_kwargs = find_best_optimisation(X, cov_form,
                                                                        verbose = verbose, **kernel_select_kwargs)
                 new_kernel_kwargs.update(kernel_kwargs)
@@ -92,32 +104,62 @@ def kernel_selector(
 
 
 def find_best_optimisation(X, cov_form, verbose = True, **kwargs):
+    print_str = ""
     data_shape = calc_data_shape(X)
     dim = len(data_shape)
-    print_str = ""
 
-    is_singlekronterm = True
-    for d in range(dim):
-        if not isinstance(cov_form[d], covtype.CovType):
-            is_singlekronterm = False
+    # Ensure dimensions from X are correct
+    if dim == 0:
+        raise Exception("No inputs/regressors in X specified.")
+    if dim == 1:
+        # Shouldn't get here if a CovType object is returned by kf
+        raise Exception("""One input/regressor in X specified but kernel function doesn't return a kernel/CovType object.
+        For 1D data make sure the kernel function kf returns a Kernel/CovType object rather than a tuple.
+        For >1D data make sure as many regressors are specified as kernel dimensions
+        i.e. X should be a tuple the same length as the terms kf returns.""")
 
-    if is_singlekronterm:
+    if isinstance(cov_form, tuple) and isinstance(cov_form[0], covtype.CovType):
+        # Recognise a single tuple of CovType objects as a SeparableKernel
+        if len(cov_form) != dim:
+            raise Exception(f"First argument returned by kernel function kf must have the same number of dimensions as the input vectors in X."\
+                            f" Got {len(cov_form)} dimensions, expected {dim} from number of terms in X.")
+
+        if isinstance(cov_form[0], quasisep_cov_list) and bool(jnp.all(jnp.diff(X[0]) >= 0.)) is False:
+            warnings.warn(f"Quasiseparable kernel specified in dimension 0 but input data for this dimension is not sorted."\
+                           " This may lead to incorrect results or produce NaNs.")
+        for d in range(1, dim):
+            if not isinstance(cov_form[d], covtype.CovType):
+                raise Exception(f"Kernel function kf must return a CovType object, or tuple(s) of CovType objects for >1D data."\
+                                f"Got {type(cov_form[d]).__name__} for dimension {d}.")
+            
+            if isinstance(cov_form[d], quasisep_cov_list) and bool(jnp.all(jnp.diff(X[d]) >= 0.)) is False:
+                warnings.warn(f"Quasiseparable kernel specified in dimension {d} but input data for this dimension is not sorted."\
+                                " This may lead to incorrect results or produce NaNs.")
+                
         use_kernel, kernel_kwargs = SeparableKernel, {}
     else:
         Sigma, *args = cov_form
-
-        # Ensure dimensions are correct
-        assert (len(Sigma) <= dim)
-        for arg in args:
-            assert len(arg) == dim
-
-        if dim == 1:
-            raise Exception("""One regressor specified but kernel function doesn't return a kernel.
-            For 1D data make sure the kernel function kf returns a Kernel object rather than a tuple.
-            For >1D data make sure as many regressors are specified as kernel dimensions
-            i.e. X should be a tuple the same length as the terms kf returns.""")
         
-        elif dim == 2:
+        if len(Sigma) != dim:
+            raise Exception(f"First argument returned by kernel function kf must have the same number of dimensions as the input vectors in X."\
+                            f" Got {len(Sigma)} dimensions, expected {dim} from number of terms in X.")
+        for (i, arg) in enumerate(args):
+            if len(arg) != dim:
+                raise Exception(f"Argument {i} returned by kernel function kf must have the same number of dimensions as the input vectors in X."\
+                                f" Got {len(arg)} dimensions, expected {dim}.")
+            
+        
+        # Look for any quasiseparable kernels used at all
+        for d in range(dim):
+            any_quasi = isinstance(Sigma[d], quasisep_cov_list)
+            for arg in args:
+                any_quasi = isinstance(arg[d], quasisep_cov_list) or any_quasi
+        
+            if any_quasi and bool(jnp.all(jnp.diff(X[d]) >= 0.)) is False:
+                warnings.warn(f"Quasiseparable kernels specified in dimension {d} but input data for this dimension is not sorted."\
+                                " This may lead to incorrect results or produce NaNs.")
+
+        if dim == 2:
             dense_kron, alpha_terms, beta_terms = read_K_list_2D(cov_form[1:], X)
 
 
@@ -138,7 +180,6 @@ def find_best_optimisation(X, cov_form, verbose = True, **kwargs):
                 dim1_quasi_compat = isinstance(arg[1], quasisep_compatible_list) and dim1_quasi_compat
 
             valid_quasi_dim = (dim0_quasi_compat, dim1_quasi_compat)
-
             if valid_quasi_dim[longest_dim]:
                 longest_fast_dim = longest_dim 
             elif valid_quasi_dim[1-longest_dim]:
@@ -156,7 +197,7 @@ def find_best_optimisation(X, cov_form, verbose = True, **kwargs):
                                                         longest_fast_dim = longest_fast_dim, verbose = verbose, **kwargs)
         else:
             # >2D GP
-            # Could also do luaslasrach but often slower for >2D
+            # Could also do luaslasrach but can be slower for >2D
             print_str += "For >2D with two Kronecker terms we currently default to LuasKernelND, but LuasLasrachKernel may be worth checking too!\n"
             use_kernel, kernel_kwargs = LuasKernelND, {}
 
@@ -195,13 +236,21 @@ def fastest_opt_2D(dense_kron, N_alpha, N_beta, data_shape,
                 use_kernel = LuasKernel
 
         else:
+            # either N_alpha > 0 or N_beta > 0 but not both
             use_kernel = LuasPlusMultiLowRankKernel
-            kernel_kwargs = {"fast_dim":N_beta > 0, "eigen_both":longest_fast_dim != longest_dim}
+
+            fast_dim = int(N_beta > 0)
+            if valid_quasi_dim[fast_dim] and fast_dim == longest_dim:
+                kernel_kwargs = {"fast_dim":fast_dim, "eigen_both":False}
+            else:
+                # fast_dim here is still used to tell which dimension the low-rank vectors are in,
+                # but we can't exploit quasiseparable kernels (should maybe change name)
+                kernel_kwargs = {"fast_dim":fast_dim, "eigen_both":True}
     else:
         if N_alpha > 0 and N_beta > 0:
             use_kernel = DoubleMultiLowRankKernel
 
-            fast_dim = N_alpha > 0
+            fast_dim = int(N_alpha > 0)
             if kron_diagonal and valid_quasi_dim[0] and valid_quasi_dim[1]:
                 kernel_kwargs = {"use_quasi":True}
             else:
@@ -233,7 +282,7 @@ def valid_kernels(dense_kron, N_alpha, N_beta, longest_fast_dim = None):
             kernel_kwarg_list = [{"fast_dim":0}, {"fast_dim":1}, {}] # choice, also luas kernel
         else:
             use_kernels = [LuasPlusMultiLowRankKernel, LuasPlusMultiLowRankKernel]
-            kernel_kwarg_list = [{"fast_dim":N_beta > 0, "eigen_both":False}, {"fast_dim":N_beta > 0, "eigen_both":True}]
+            kernel_kwarg_list = [{"fast_dim":int(N_beta > 0), "eigen_both":False}, {"fast_dim":int(N_beta > 0), "eigen_both":True}]
     else:
         if N_alpha > 0 and N_beta > 0:
             use_kernels = [DoubleMultiLowRankKernel]
@@ -242,6 +291,6 @@ def valid_kernels(dense_kron, N_alpha, N_beta, longest_fast_dim = None):
             use_kernels = [SeparableKernel]
         else:
             use_kernels = [MultiLowRankKernel, MultiLowRankKernel]
-            kernel_kwarg_list = [{"fast_dim":N_alpha > 0, "use_quasi":True}, {"fast_dim":N_alpha > 0, "use_quasi":False}]
+            kernel_kwarg_list = [{"fast_dim":int(N_alpha > 0), "use_quasi":True}, {"fast_dim":int(N_alpha > 0), "use_quasi":False}]
 
     return use_kernels, kernel_kwarg_list

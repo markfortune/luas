@@ -94,10 +94,10 @@ def Exp(scale: Scalar, sigma: Scalar = 1.) -> JAXArray:
 
     .. math::
 
-        k(x,y)=\sigma^2\exp\left(-\frac{\|x-y\|}{\mathrm{scale}}\right)
+        k(x,y)=\sigma^2\exp\left(-\frac{\|x-y\|}{l}\right)
 
     Args:
-        scale (Scalar): Length scale :math:`L`.
+        scale (Scalar): The parameter :math:`l`.
         sigma (Scalar, optional): Kernel amplitude.
 
     Returns:
@@ -120,10 +120,10 @@ def SquaredExp(scale: Scalar, sigma: Scalar = 1., axes: JAXArray | None = None) 
 
     .. math::
 
-        k(x,y)=\sigma^2\exp\left(-\frac{\|x-y\|^2}{2\,\mathrm{scale}^2}\right)
+        k(x,y)=\sigma^2\exp\left(-\frac{\|x-y\|^2}{2l^2}\right)
 
     Args:
-        scale (Scalar): Length scale :math:`L`.
+        scale (Scalar): The parameter :math:`l`.
         sigma (Scalar, optional): Kernel amplitude.
         axes (JAXArray | None, optional): Optional axes selector forwarded internally.
 
@@ -148,10 +148,10 @@ def Matern32(scale: Scalar, sigma: Scalar = 1.) -> JAXArray:
 
     .. math::
 
-        k(x,y)=\sigma^2\left(1+\sqrt{3}r\right)e^{-\sqrt{3}r},\quad r=\frac{\|x-y\|}{\mathrm{scale}}
+        k(x,y)=\sigma^2\left(1+\sqrt{3}r\right)e^{-\sqrt{3}r},\quad r=\frac{\|x-y\|}{l}
 
     Args:
-        scale (Scalar): Length scale.
+        scale (Scalar): The parameter :math:`l`.
         sigma (Scalar, optional): Kernel amplitude.
 
     Returns:
@@ -175,10 +175,10 @@ def Matern52(scale: Scalar, sigma: Scalar = 1.) -> JAXArray:
 
     .. math::
 
-        k(x,y)=\sigma^2\left(1+\sqrt{5}r+\frac{5}{3}r^2\right)e^{-\sqrt{5}r},\quad r=\frac{\|x-y\|}{\mathrm{scale}}
+        k(x,y)=\sigma^2\left(1+\sqrt{5}r+\frac{5}{3}r^2\right)e^{-\sqrt{5}r},\quad r=\frac{\|x-y\|}{l}
 
     Args:
-        scale (Scalar): Length scale.
+        scale (Scalar): The parameter :math:`l`.
         sigma (Scalar, optional): Kernel amplitude.
 
     Returns:
@@ -199,12 +199,17 @@ def matern52_calc(x: JAXArray, y: JAXArray, L: Scalar) -> JAXArray:
 def MaternHalfInt(scale: Scalar, double_nu: int, sigma: Scalar = 1.) -> JAXArray:
     r"""Half-integer Matérn kernel family.
 
-    Constructs a Matérn covariance with :math:`\nu = (\text{double_nu})/2`,
-    where ``double_nu`` is expected to be an odd positive integer for
-    half-integer :math:`\nu` values.
+    .. math::
+
+        k(x,y)=\sigma^2\,\frac{p!}{(2p)!}\,e^{-\sqrt{2p+1}\,r}\sum_{i=0}^{p}\frac{(p+i)!}{i!\,(p-i)!}
+        \left(2\sqrt{2p+1}\,r\right)^{p-i},\quad r=\frac{\|x-y\|}{l}
+
+    where :math:`p = \nu - \tfrac{1}{2}` and :math:`\nu` is ``double_nu / 2``, so ``double_nu`` must
+    be an odd positive integer. ``double_nu = 1, 3, 5`` give the same kernels as :func:`Exp`,
+    :func:`Matern32` and :func:`Matern52`.
 
     Args:
-        scale (Scalar): Length scale parameter.
+        scale (Scalar): The parameter :math:`l`.
         double_nu (int): Twice the Matérn smoothness parameter :math:`\nu`.
         sigma (Scalar, optional): Kernel amplitude.
 
@@ -244,10 +249,10 @@ def RationalQuadratic(scale: Scalar, alpha: Scalar, sigma: Scalar = 1.) -> JAXAr
 
     .. math::
 
-        k(x,y)=\sigma^2\left(1+\frac{\|x-y\|^2}{2\alpha\,\mathrm{scale}^2}\right)^{-\alpha}
+        k(x,y)=\sigma^2\left(1+\frac{\|x-y\|^2}{2\alpha l^2}\right)^{-\alpha}
 
     Args:
-        scale (Scalar): Length scale.
+        scale (Scalar): The parameter :math:`l`.
         alpha (Scalar): Scale-mixture parameter.
         sigma (Scalar, optional): Kernel amplitude.
 
@@ -271,11 +276,11 @@ def ExpSineSquared(gamma: Scalar, period: Scalar, sigma: Scalar = 1.) -> JAXArra
 
     .. math::
 
-        k(x,y)=\sigma^2\exp\left[-\gamma\,\sin^2\!\left(\pi\frac{x-y}{\mathrm{period}}\right)\right]
+        k(x,y)=\sigma^2\exp\left[-\gamma\,\sin^2\!\left(\pi\frac{x-y}{P}\right)\right]
 
     Args:
-        gamma (Scalar): Periodic smoothness parameter.
-        period (Scalar): Period.
+        gamma (Scalar): The parameter :math:`\gamma`, which sets how smooth the kernel is within each period.
+        period (Scalar): The parameter :math:`P`, the period of the kernel.
         sigma (Scalar, optional): Kernel amplitude.
 
     Returns:
@@ -298,10 +303,10 @@ def Cosine(period: Scalar, sigma: Scalar = 1.) -> JAXArray:
 
     .. math::
 
-        k(x,y)=\sigma^2\cos\left(2\pi\frac{\|x-y\|}{\mathrm{period}}\right)
+        k(x,y)=\sigma^2\cos\left(2\pi\frac{\|x-y\|}{P}\right)
 
     Args:
-        period (Scalar): Period.
+        period (Scalar): The parameter :math:`P`, the period of the kernel.
         sigma (Scalar, optional): Kernel amplitude.
 
     Returns:
@@ -323,8 +328,12 @@ def cosine_calc(x: JAXArray, y: JAXArray, period: Scalar) -> JAXArray:
 def PoweredExp(scale: Scalar, k: Scalar, sigma: Scalar = 1.) -> JAXArray:
     r"""Powered exponential kernel factory.
 
+    .. math::
+
+        k(x,y)=\sigma^2\exp\left[-\left(\frac{\|x-y\|}{l}\right)^{k}\right]
+
     Args:
-        scale (Scalar): Length scale.
+        scale (Scalar): The parameter :math:`l`.
         k (Scalar): Exponent parameter.
         sigma (Scalar, optional): Kernel amplitude.
 
@@ -401,6 +410,19 @@ def Custom(kf: Callable, hp: PyTree, params = None, kf_args = (), kf_kwargs = {}
 
 
 def Fixed(cov_mat: JAXArray, params = None, ignore_idx = False, sigma: Scalar = 1.) -> JAXArray:
+    r"""A fixed covariance matrix which doesn't depend on any kernel function, scaled by :math:`\sigma^2`.
+
+    Args:
+        cov_mat (JAXArray): The covariance matrix, of shape ``(N, N)``.
+        params (optional): Metadata about the parameters the object depends on.
+        ignore_idx (bool, optional): If ``True``, always return the full matrix, even when a sub-matrix is
+            requested. Defaults to ``False``.
+        sigma (Scalar, optional): Amplitude. Defaults to 1.
+
+    Returns:
+        JAXArray: A ``covtype.General`` covariance object.
+
+    """
 
     def kf(hp, x1, x2, full = True, row_idx = None, col_idx = None, **kwargs):
 

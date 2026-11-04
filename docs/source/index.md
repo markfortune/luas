@@ -2,7 +2,11 @@
 
 # luas
 
-`luas`, from the Irish word for speed, is a library designed for building efficient Gaussian processes (GPs) primarily for two-dimensional rectangular data sets, although it can be used for one-dimensional (or even n-dimensional) datasets. By utilising different optimisations - such as using Kronecker product algebra - we can make the application of GPs to 2D data sets which can contain millions of points with log-likelihood calculations often measured in milliseconds (see [Benchmarking](benchmarking)). `luas` can be used with popular inference frameworks such as [`PyMC`](https://www.pymc.io/welcome.html) and [`NumPyro`](https://num.pyro.ai/en/latest/index.html), for which there are [tutorials](tutorials_index) to help you get started.
+:::{note}
+This is a new update to luas which is still in development. Feel free to play around with the tutorials but the interface has not yet stabilised and some functions may still fail silently. You can expect a more stable interface with better documentation and tutorials in the next 1-2 months.
+:::
+
+`luas`, from the Irish word for speed, is a library designed for building efficient Gaussian processes (GPs) primarily for two-dimensional rectangular data sets, although it can be used for one-dimensional (or even n-dimensional) datasets. By utilising different optimisations - such as using Kronecker product algebra - we can make the application of GPs to 2D data sets which can contain millions of points with log-likelihood calculations often measured in milliseconds (see [Benchmarking](benchmarking.md)). `luas` can be used with popular inference frameworks such as [`PyMC`](https://www.pymc.io/welcome.html) and [`NumPyro`](https://num.pyro.ai/en/latest/index.html), for which there are [tutorials](tutorials_index) to help you get started.
 
 :::{note}
 This package has been implemented using [`jax`](https://github.com/google/jax), which helps to calculate derivatives of the log-likelihood, as well as permitting the code to be easily run on either CPU or GPU. See [Working with JAX](things_to_know) for more details.

@@ -96,3 +96,38 @@ nb_execution_mode = "auto"
 nb_execution_timeout = 60
 nb_merge_streams = True
 nb_execution_excludepatterns = ["2D_GP_intro.ipynb", "Numpyro Example.ipynb", "PyMC Example.ipynb"]
+
+
+# -- GP method pages ---------------------------------------------------------
+# The GP class is defined in the module luas/GP.py, so ``luas.GP`` is both a
+# module and (after ``import luas``) the class. Autosummary can only import the
+# GP methods through the module (``luas.GP.GP.<method>``, see GP.rst), but the
+# method pages (_templates/autosummary/gp_method.rst) document them as
+# ``luas.GP.<method>`` to match how the class is documented and used. This
+# points the links in the GP.rst tables, and any short references such as
+# :meth:`logL` inside the GP docstrings, at those method pages.
+def _resolve_gp_method_refs(app, env, node, contnode):
+    if node.get("refdomain") != "py":
+        return None
+    target = node.get("reftarget", "")
+    for prefix in ("luas.GP.GP.", "luas.GP.", "GP."):
+        if target.startswith(prefix):
+            name = target[len(prefix):]
+            break
+    else:
+        # A bare name, only treat it as a GP method inside the GP class docs
+        if node.get("py:class") != "GP":
+            return None
+        name = target
+
+    from luas import GP
+    if "." in name or not callable(getattr(GP, name, None)):
+        return None
+    return env.get_domain("py").resolve_xref(
+        env, node["refdoc"], app.builder, node["reftype"],
+        "luas.GP." + name, node, contnode,
+    )
+
+
+def setup(app):
+    app.connect("missing-reference", _resolve_gp_method_refs)

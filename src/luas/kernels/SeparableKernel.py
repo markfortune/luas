@@ -122,6 +122,7 @@ class SeparableKernel(CovType):
         inv_dims: bool = False,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
 
         self.Sigma = Sigma
         self.dim = len(Sigma)
@@ -144,6 +145,18 @@ class SeparableKernel(CovType):
             self.decompose = self.decompose_no_stored_values
     
     def evaluate(self, X, **kwargs):
+        r"""Builds the full dense covariance matrix by evaluating each Kronecker term and summing them. Only
+        practical for small data sets, as the matrix has :math:`N^2` entries for :math:`N` data points.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            **kwargs: Passed to each covariance object's ``evaluate`` method, e.g. ``wn``.
+
+        Returns:
+            JAXArray: The covariance matrix, of shape ``(N, N)``, ordered as the row-major (``"C"``) flattening
+            of the data array.
+
+        """
 
         dim = len(X)
         Sigma = self.Sigma[0].evaluate(X[0], X[0], **kwargs)
@@ -160,6 +173,18 @@ class SeparableKernel(CovType):
         full = True,
         **kwargs,
     ) -> PyTree:
+        r"""Decomposes each :math:`\mathbf{\Sigma}_d` separately using its own ``decompose`` method. The log
+        determinant of the Kronecker product is :math:`\sum_d (N / N_d) \log|\mathbf{\Sigma}_d|`.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+            full (bool, optional): Not used.
+
+        Returns:
+            (SeparableKernel, PyTree): Itself and the stored values, including ``"logdet"``.
+
+        """
 
         total_size = calc_total_size(X)
         gp_dim = len(X)
@@ -182,14 +207,25 @@ class SeparableKernel(CovType):
         return self, stored_values
     
     def dot_solve_w_inv_dims(self, R):
+        r"""Calculates :math:`\vec{r}^T \mathbf{K}^{-1} \vec{r}`, applying the full inverse
+        :math:`\mathbf{\Sigma}_d^{-1}` along any dimension whose covariance object has no matrix inverse square
+        root. Used instead of ``dot_solve`` when ``inv_dims = True``.
+
+        Args:
+            R (JAXArray): The data-shaped residuals.
+
+        Returns:
+            Scalar: :math:`\vec{r}^T \mathbf{K}^{-1} \vec{r}`.
+
+        """
         R_prime = cyclic_transpose(R, 2)
         R_T = R_prime.copy()
 
         for d in range(self.dim):
-            try:
+            if hasattr(self.Sigma[d], "matrix_inv_sqrt"):
                 R_prime = self.Sigma[d].matrix_inv_sqrt(R_prime, transpose = 0)
                 R_T = self.Sigma[d].matrix_inv_sqrt(R_T, transpose = 0)
-            except:
+            else:
                 R_prime = self.Sigma[d].inverse(R_prime)
             
             R_prime = cyclic_transpose(R_prime, 1)
@@ -198,6 +234,11 @@ class SeparableKernel(CovType):
         return (R_T * R_prime).sum()
     
     def matrix_sqrt(self, R, transpose = 0):
+        r"""Multiplies ``R`` by the matrix square root :math:`\bigotimes_d \mathbf{L}_d` (or its transpose if
+        ``transpose = 1``), by applying each :math:`\mathbf{L}_d` along its own dimension. Requires
+        :meth:`decompose` to have been called.
+
+        """
 
         R_prime = cyclic_transpose(R, 2)
 
@@ -214,6 +255,10 @@ class SeparableKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\bigotimes_d \mathbf{L}_d^{-1}` (or its transpose if ``transpose = 1``), by applying
+        each :math:`\mathbf{L}_d^{-1}` along its own dimension. Requires :meth:`decompose` to have been called.
+
+        """
 
         R_prime = cyclic_transpose(R, 2)
 
@@ -230,6 +275,17 @@ class SeparableKernel(CovType):
         X,
         **kwargs,
     ):
+        r"""Calculates the eigendecomposition of the Kronecker product from the eigendecomposition along each
+        dimension: the eigenvalues are the Kronecker product of the eigenvalues along each dimension.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+
+        Returns:
+            (JAXArray, tuple): The eigenvalues, with one axis per dimension, and a tuple of the eigenvectors along
+            each dimension.
+
+        """
 
         dim = len(X)
 
@@ -238,7 +294,7 @@ class SeparableKernel(CovType):
         eigen_decomp_mats = ()
         
         for d in jnp.arange(dim):
-            lam_d, Q_d = self.Sigma[d].eigendecomp(X)
+            lam_d, Q_d = self.Sigma[d].eigendecomp(X[d])
 
             all_lam = jnp.kron(all_lam.reshape(all_lam_shape + (1,)), lam_d)
             all_lam_shape = all_lam.shape
@@ -247,6 +303,19 @@ class SeparableKernel(CovType):
         return all_lam, eigen_decomp_mats
     
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying each
+        Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The array to multiply, with one axis per dimension.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product, with one axis per dimension.
+
+        """
         
         R_prime = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
         

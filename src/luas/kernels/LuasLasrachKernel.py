@@ -159,6 +159,7 @@ class LuasLasrachKernel(CovType):
         use_pmap = False,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         if fast_dim is None:
             # Must specify the fast_dim
             raise Exception("Must specify fast_dim, which is the dimension which will not be eigendecomposed/simultaneously diagonlised.\
@@ -179,6 +180,22 @@ class LuasLasrachKernel(CovType):
             self.decompose = self.decompose_no_stored_values
     
     def evaluate(self, X1, X2, full = True, row_idx = None, col_idx = None, **kwargs):
+        r"""Builds the full dense covariance matrix, :math:`\bigotimes_d \mathbf{\Sigma}_d + \bigotimes_d \mathbf{K}_d`.
+        Only practical for small data sets.
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns.
+            full (bool, optional): Whether to evaluate the full matrices along each dimension, otherwise the
+                sub-matrices given by ``row_idx`` and ``col_idx``. Defaults to ``True``.
+            row_idx (tuple, optional): Row indices along each dimension if ``full = False``.
+            col_idx (tuple, optional): Column indices along each dimension if ``full = False``.
+            **kwargs: Passed to each covariance object's ``evaluate`` method, e.g. ``wn``.
+
+        Returns:
+            JAXArray: The covariance matrix, ordered as the row-major (``"C"``) flattening of the data array.
+
+        """
 
         dim = len(X1)
 
@@ -206,6 +223,26 @@ class LuasLasrachKernel(CovType):
         X: Tuple,
         stored_values: Optional[PyTree] = None,
     ) -> PyTree:
+        r"""Decomposes the covariance matrix.
+
+        Along every dimension except ``fast_dim``, :math:`\mathbf{\Sigma}_d` is decomposed, :math:`\mathbf{K}_d` is
+        whitened by it and the result eigendecomposed, as for :class:`luas.LuasKernel`. In this transformed basis
+        the covariance matrix becomes block diagonal, with one block per combination of eigenvalues along the
+        other dimensions: :math:`\mathbf{\Sigma}_{\mathrm{fast}} + \lambda\mathbf{K}_{\mathrm{fast}}`. These
+        independent blocks along ``fast_dim`` are decomposed with ``BlockKernel`` using their own (e.g.
+        quasiseparable) decompositions. If :math:`\tilde{\mathbf{K}}_d` is low rank, only the blocks with non-zero
+        eigenvalues need this, and the rest only need :math:`\mathbf{\Sigma}_{\mathrm{fast}}` (see
+        ``Block2x2Kernel``).
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+
+        Returns:
+            (LuasLasrachKernel, PyTree): Itself and the stored values, including ``"logdet"`` and the eigenvalues
+            ``"lam_d"``, eigenvectors ``"Q_d"`` and rank ``"rank_d"`` along each dimension except ``fast_dim``.
+
+        """
 
         total_size = calc_total_size(X)
         self.dim = len(X)
@@ -284,6 +321,14 @@ class LuasLasrachKernel(CovType):
 
 
     def transform_fn(self, R, transpose = 0):
+        r"""Applies the transformation :math:`\mathbf{T}` along every dimension except ``fast_dim`` (or
+        :math:`\mathbf{T}^T` if ``transpose = 1``), where along each such dimension it is :math:`\mathbf{L}_d\mathbf{Q}_d`:
+        the matrix square root of :math:`\mathbf{\Sigma}_d` times the eigenvectors of the whitened
+        :math:`\tilde{\mathbf{K}}_d`. The matrix square root of the covariance matrix is
+        :math:`\mathbf{T}\tilde{\mathbf{L}}`, where :math:`\tilde{\mathbf{L}}` is the matrix square root of the
+        independent blocks along ``fast_dim``. Requires :meth:`decompose` to have been called.
+
+        """
         
         R_prime = cyclic_transpose(R, 2)
 
@@ -306,6 +351,10 @@ class LuasLasrachKernel(CovType):
 
 
     def inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse transformation :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if ``transpose = 1``),
+        see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
         R_prime = cyclic_transpose(R, 2)
 
         if transpose:
@@ -326,6 +375,18 @@ class LuasLasrachKernel(CovType):
     
 
     def _calc_in_flat_fast_dim(self, fn, R, **kwargs):
+        r"""Applies ``fn`` to ``R`` after rotating ``fast_dim`` to the last axis and flattening every other axis into
+        one, so ``fn`` acts on a 2D array of shape ``(N_other, N_fast)``. The result is reshaped and rotated back.
+
+        Args:
+            fn (Callable): The function to apply, e.g. a matrix square root of the blocks along ``fast_dim``.
+            R (JAXArray): The data-shaped array.
+            **kwargs: Passed to ``fn``.
+
+        Returns:
+            JAXArray: The result, with the same shape as ``R``.
+
+        """
         
         R_rot = cyclic_transpose(R, -(self.dim-self.fast_dim-1))
         R_rot_shape = R_rot.shape
@@ -343,6 +404,11 @@ class LuasLasrachKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}` (or
+        :math:`\mathbf{L}^T` if ``transpose = 1``), see :meth:`transform_fn`. Requires :meth:`decompose` to have
+        been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -359,6 +425,10 @@ class LuasLasrachKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = \tilde{\mathbf{L}}^{-1}\mathbf{T}^{-1}` (or :math:`\mathbf{L}^{-T}`
+        if ``transpose = 1``), see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self._calc_in_flat_fast_dim(self.kf_tilde.matrix_inv_sqrt, R, transpose = 1)
@@ -370,6 +440,19 @@ class LuasLasrachKernel(CovType):
         return R_prime
 
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying each
+        Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The array to multiply, with one axis per dimension.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product, with one axis per dimension.
+
+        """
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
         K_R += tensor_mult(self.K, X1, X2, R, **kwargs)

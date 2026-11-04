@@ -35,7 +35,10 @@ def read_K_list_2D(K_list, X):
             if dense_kron is None:
                 dense_kron = [K_0, K_1]
             else:
-                raise Exception("Can only have one dense Kronecker term!")
+                raise Exception("luas only implements an optimisation for a maximum of two dense kernels in the Kronecker product."\
+                                " Options are to switch to low-rank kernel terms in one of the dimensions beyond two dense terms"\
+                                " or force use_kernel = luas.GeneralKernel which will build the full covariance matrix and decompose it"\
+                                " (can be very slow and memory intensive for large datasets).")
 
         else:
             raise Exception("All kernel terms must be valid CovType objects")

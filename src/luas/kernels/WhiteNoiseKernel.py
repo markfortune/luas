@@ -71,6 +71,7 @@ class WhiteNoiseKernel(CovType):
         wn_diag: Optional[JAXArray] = 0.,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         # Function used to build the covariance matrix K
         self.diag = diag
         self.wn_diag = wn_diag
@@ -86,6 +87,19 @@ class WhiteNoiseKernel(CovType):
         col_idx = None,
         **kwargs,
     ) -> JAXArray:
+        r"""Builds the full diagonal covariance matrix, with diagonal ``diag + wn * wn_diag`` flattened in row-major
+        (``"C"``) order.
+
+        Args:
+            X (tuple): Input locations along each dimension, used for the shape of the data.
+            wn (bool, optional): Whether to include ``wn_diag``. Defaults to ``True``.
+            full (bool, optional): Must be ``True``, sub-matrices are not implemented.
+            row_idx, col_idx: Not used.
+
+        Returns:
+            JAXArray: The diagonal covariance matrix, of shape ``(N, N)``.
+
+        """
 
         diag = (self.diag + wn * self.wn_diag) * jnp.ones(calc_data_shape(X))
 
@@ -102,6 +116,17 @@ class WhiteNoiseKernel(CovType):
         wn = True,
         **kwargs,
     ) -> JAXArray:
+        r"""Stores the variance at every data point, ``diag + wn * wn_diag``, and the log determinant (the sum of
+        their logs).
+
+        Args:
+            X (tuple): Input locations along each dimension, used for the shape of the data.
+            wn (bool, optional): Whether to include ``wn_diag``. Defaults to ``True``.
+
+        Returns:
+            (WhiteNoiseKernel, dict): Itself and the stored value ``"logdet"``.
+
+        """
 
         self.D = (self.diag + wn * self.wn_diag) * jnp.ones(calc_data_shape(X))
         self.logdet = jnp.log(self.D).sum()
@@ -113,6 +138,7 @@ class WhiteNoiseKernel(CovType):
         R: JAXArray,
         **kwargs,
     ) -> JAXArray:
+        r"""Multiplies ``R`` element-wise by the standard deviation at each data point. Requires :meth:`decompose` to have been called."""
 
         return R * jnp.sqrt(self.D)
 
@@ -121,6 +147,7 @@ class WhiteNoiseKernel(CovType):
         R: JAXArray,
         **kwargs,
     ) -> JAXArray:
+        r"""Divides ``R`` element-wise by the standard deviation at each data point. Requires :meth:`decompose` to have been called."""
 
         return R * jnp.sqrt(1/self.D)
 
@@ -128,6 +155,7 @@ class WhiteNoiseKernel(CovType):
         self,
         R: JAXArray,
     ) -> JAXArray:
+        r"""Divides ``R`` element-wise by the variance at each data point. Requires :meth:`decompose` to have been called."""
 
         return R * (1/self.D)
 
@@ -135,6 +163,10 @@ class WhiteNoiseKernel(CovType):
         self,
         R: JAXArray,
     ) -> JAXArray:
+        r"""Calculates :math:`\vec{r}^T \mathbf{K}^{-1} \vec{r}`, the sum of the squared residuals divided by the
+        variance at each data point. Requires :meth:`decompose` to have been called.
+
+        """
 
         return jnp.sum(jnp.square(R)/self.D)
 
@@ -144,6 +176,19 @@ class WhiteNoiseKernel(CovType):
         v2: JAXArray,
         vec_dim: int,
     ) -> JAXArray:
+        r"""Calculates the products :math:`\vec{v}_1^T \mathbf{K}^{-1} \vec{v}_2` for blocks of vectors, by contracting
+        ``v1 * v2`` along its first axis with the inverse variances along axis ``vec_dim``. Used for the low-rank
+        corrections of the Kronecker kernels with low-rank terms.
+
+        Args:
+            v1 (JAXArray): The first set of vectors.
+            v2 (JAXArray): The second set of vectors, with the same shape as ``v1``.
+            vec_dim (int): The axis of the variances to contract over.
+
+        Returns:
+            JAXArray: The products.
+
+        """
 
         vec_prod = v1 * v2
 
@@ -162,6 +207,18 @@ class WhiteNoiseKernel(CovType):
         col_idx = None,
         **kwargs,
     ) -> JAXArray:
+        r"""Multiplies ``R`` element-wise by ``diag + wn * wn_diag``.
+
+        Args:
+            X1, X2 (tuple): Not used, accepted for the common Kronecker kernel interface.
+            R (JAXArray): The data-shaped array to multiply.
+            wn (bool, optional): Whether to include ``wn_diag``. Defaults to ``True``.
+            full (bool, optional): Must be ``True`` unless the variance is a scalar.
+
+        Returns:
+            JAXArray: The product.
+
+        """
         
         diag = self.diag + wn * self.wn_diag
 

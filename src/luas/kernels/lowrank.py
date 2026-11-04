@@ -13,42 +13,57 @@ from luas.kernels.diagonal import KroneckerDelta, Noise
 
 
 class LowRank(General):
-    def __init__(self, kf, hp = {}, V = None, rank = None, params = None):
+    r"""A dense covariance matrix with a known rank, e.g. a low-rank approximation to a kernel. Behaves like
+    ``covtype.General``, but records its rank so the Kronecker kernels can treat it as a sum of that many
+    rank-one terms.
+
+    Args:
+        kf (Callable): Kernel function ``kf(hp, x1, x2, **kwargs)`` returning the covariance matrix.
+        hp (PyTree, optional): Hyperparameters passed to ``kf``. Defaults to an empty dict.
+        rank (int): The rank of the matrix. Required.
+        params (optional): Metadata about the parameters the object depends on.
+
+    """
+    def __init__(self, kf, hp = {}, rank = None, params = None):
+        r"""Creates the object, see the class docstring for the arguments."""
         self.kf = kf
         self.hp = hp
         self.fixed_rank = rank
         self.params = params
-        self.V = V
 
         if rank is None:
             raise Exception("Must specify rank of LowRank term")
 
     def eigendecomp(self, x, wn = True, full = True, idx = None, **kwargs):
-        if self.V is not None:
-            lam = jnp.concatenate([jnp.zeros(x.shape[-1] - self.fixed_rank), (self.V**2).sum(0)])
+        r"""Calculates the eigendecomposition. Currently unoptimised as it calculates the full eigenvalues and eigenvectors.
 
-            # Need to optimise better, matmuls can be much faster!
-            V = jnp.zeros((x.shape[-1], x.shape[-1]))
-            V = V.at[:, -self.fixed_rank:].set(self.V)
-            return lam, V
+        Returns:
+            (JAXArray, JAXArray): The eigenvalues and a matrix whose columns are the eigenvectors.
+
+        """
+        if not full:
+            K = self.evaluate(x, x, wn = wn, full = False,
+                            row_idx = idx, col_idx = idx, **kwargs)
         else:
-            if not full:
-                K = self.evaluate(x, x, wn = wn, full = False,
-                                row_idx = idx, col_idx = idx, **kwargs)
-            else:
-                K = self.evaluate(x, x, wn = wn, full = True, **kwargs)
+            K = self.evaluate(x, x, wn = wn, full = True, **kwargs)
 
-            # ideally there should be a faster way to do this than calculating a full eigen
-            return stable_eigh(K)
+        # ideally there should be a faster way to do this than calculating a full eigen
+        return stable_eigh(K)
     
 
     def rank(self, x):
+        r"""Returns the rank given when the object was created."""
         return self.fixed_rank
 
     def scale(self, c):
+        r"""Returns a ``LowRank`` object for :math:`c\mathbf{K}`, with the same rank."""
         return LowRank(kf = lambda hp, x1, x2, **kwargs: c*self.evaluate(x1, x2, **kwargs), rank = self.fixed_rank)
     
     def __add__(self, other):
+        r"""Adds another ``LowRank`` or ``Outer`` object, giving a ``LowRank`` object whose rank is the sum of their
+        ranks. Adding an array or scalar gives a ``General`` object.
+
+        """
         if isinstance(other, LowRank):
             return LowRank(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) + other.evaluate(x1, x2, **kwargs),
                            rank = self.fixed_rank + other.fixed_rank)
@@ -63,27 +78,39 @@ class LowRank(General):
             return NotImplemented
 
     def transform_with_inv_sqrt(self, matrix_sqrt_fn, x, **kwargs):
-        if self.V is not None:
-            return self
-        else:
-            def kf_transf(hp, x1, x2, **kwargs):
-                    K_eval = self.evaluate(x1, x2, **kwargs)
-                    K_prime = matrix_sqrt_fn(K_eval, transpose=0)
-                    K_tilde = matrix_sqrt_fn(K_prime.T, transpose=0)
-                    
-                    return K_tilde
+        r"""Whitens the matrix with an inverse matrix square root, returning
+        :math:`\mathbf{L}^{-1}\mathbf{K}\mathbf{L}^{-T}` as a ``LowRank`` object with the same rank. Called by
+        ``CovType.inv_sqrt_transform``.
 
-            return LowRank(kf_transf, rank = self.fixed_rank)
+        Args:
+            matrix_sqrt_fn (Callable): Function ``matrix_sqrt_fn(R, transpose = 0)`` applying :math:`\mathbf{L}^{-1}`.
+            x (JAXArray): Not used.
+
+        Returns:
+            LowRank: The transformed covariance object.
+
+        """
+        def kf_transf(hp, x1, x2, **kwargs):
+                K_eval = self.evaluate(x1, x2, **kwargs)
+                K_prime = matrix_sqrt_fn(K_eval, transpose=0)
+                K_tilde = matrix_sqrt_fn(K_prime.T, transpose=0)
+                
+                return K_tilde
+
+        return LowRank(kf_transf, rank = self.fixed_rank)
 
 
     def evaluate(self, x1, x2, **kwargs):
+        r"""Evaluates the kernel function, ``kf(hp, x1, x2, **kwargs)``."""
         return self.kf(self.hp, x1, x2, **kwargs)
     
     def matmul(self, x1, x2, R, **kwargs):
+        r"""Multiplies ``R`` by the dense matrix between ``x1`` and ``x2``."""
         return self.evaluate(x1, x2, **kwargs) @ R
 
 
     def __mul__(self, other) -> Kernel:
+        r"""Returns a ``General`` object for the element-wise product with another covariance object or array, or a ``LowRank`` object scaled by a scalar."""
         if isinstance(other, CovType):
             return General(kf = lambda hp, x1, x2, **kwargs: self.evaluate(x1, x2, **kwargs) * other.evaluate(x1, x2, **kwargs))
         elif is_scalar(other):
@@ -96,10 +123,11 @@ class LowRank(General):
 
 
 def Constant(sigma: JAXArray, **kwargs) -> JAXArray:
-    r"""Low-rank constant covariance term.
+    r"""Rank-one constant covariance term, a matrix with every entry equal to :math:`\sigma^2`.
 
     Args:
-        sigma (JAXArray): Constant standard deviation amplitude.
+        sigma (JAXArray): The amplitude :math:`\sigma`.
+        **kwargs: Not used.
 
     Returns:
         JAXArray: ``Outer`` covariance component.
@@ -109,10 +137,12 @@ def Constant(sigma: JAXArray, **kwargs) -> JAXArray:
 
 
 def Amplitude(alpha: JAXArray, **kwargs) -> JAXArray:
-    r"""Low-rank linear covariance term.
+    r"""Rank-one covariance term :math:`\vec{\alpha}\vec{\alpha}^T`, e.g. a fixed shape along this dimension
+    with an amplitude given by the kernel along the other dimension.
 
     Args:
-        alpha (JAXArray): Coefficient vector defining the outer-product term.
+        alpha (JAXArray): The vector :math:`\vec{\alpha}`.
+        **kwargs: Not used.
 
     Returns:
         JAXArray: ``Outer`` covariance component.
@@ -122,15 +152,17 @@ def Amplitude(alpha: JAXArray, **kwargs) -> JAXArray:
 
 
 def MixingMat(V: JAXArray, **kwargs) -> JAXArray:
-    r"""Low-rank linear covariance term.
+    r"""Low-rank covariance term :math:`\mathbf{V}\mathbf{V}^T` from a fixed mixing matrix, i.e. a sum of
+    rank-one terms :math:`\sum_i \vec{v}_i\vec{v}_i^T` from the columns of :math:`\mathbf{V}`.
 
     Args:
-        alpha (JAXArray): Coefficient vector defining the outer-product term.
+        V (JAXArray): The mixing matrix, of shape ``(N, rank)``.
+        **kwargs: Extra keyword arguments forwarded to ``LowRank``.
 
     Returns:
-        JAXArray: ``Outer`` covariance component.
+        JAXArray: ``LowRank`` covariance object with rank ``V.shape[1]``.
     """
-    return LowRank(lambda hp, x, y, **kwargs: V @ V.T, rank = V.shape[1], V = V, **kwargs)
+    return LowRank(lambda hp, x, y, **kwargs: V @ V.T, rank = V.shape[1], **kwargs)
 
 
 def SquaredExp(scale: Scalar, axes: JAXArray | None = None, rank = None, **kwargs) -> JAXArray:
@@ -138,12 +170,14 @@ def SquaredExp(scale: Scalar, axes: JAXArray | None = None, rank = None, **kwarg
 
     .. math::
 
-        k(x,y)=\exp\left(-\frac{\|x-y\|^2}{2\,\mathrm{scale}^2}\right)
+        k(x,y)=\exp\left(-\frac{\|x-y\|^2}{2l^2}\right)
 
     Args:
-        scale (Scalar): Length scale.
-        axes (JAXArray | None, optional): Optional axes selector.
-        rank (optional): Target low-rank approximation rank.
+        scale (Scalar): The parameter :math:`l`.
+        axes (JAXArray | None, optional): Not used.
+        rank (int): The rank the matrix is treated as having. Required. The full squared exponential
+            matrix is evaluated, which is numerically low rank for long length scales, and only this many of
+            its largest eigenvalues are kept by the Kronecker kernels.
         **kwargs: Extra keyword arguments forwarded to ``LowRank``.
 
     Returns:
@@ -159,10 +193,10 @@ def Cosine(period: Scalar, **kwargs) -> JAXArray:
 
     .. math::
 
-        k(x,y)=\cos\left(2\pi\frac{\|x-y\|}{\mathrm{period}}\right)
+        k(x,y)=\cos\left(2\pi\frac{\|x-y\|}{P}\right)
 
     Args:
-        period (Scalar): Period.
+        period (Scalar): The parameter :math:`P`, the period of the kernel.
         **kwargs: Extra keyword arguments forwarded to ``LowRank``.
 
     Returns:
@@ -173,6 +207,26 @@ def Cosine(period: Scalar, **kwargs) -> JAXArray:
 
 
 def ExpSineSquaredApprox(gamma: Scalar, period: Scalar, order: int, sigma: Scalar = 1., **kwargs):
+    r"""Low-rank approximation to the exponential sine squared periodic kernel.
+
+    .. math::
+
+        k(x,y)\approx\sigma^2\exp\left[-\gamma\,\sin^2\!\left(\pi\frac{x-y}{P}\right)\right]
+
+    The exponential sine squared kernel is approximated by a sum of ``order`` cosine terms (plus a
+    constant), following Solin & Särkkä (2014). Larger values of ``gamma`` need a higher ``order``
+    to be accurate. The rank of the covariance matrix is ``1 + 2 * order``.
+
+    Args:
+        gamma (Scalar): The parameter :math:`\gamma`, which sets how smooth the kernel is within each period.
+        period (Scalar): The parameter :math:`P`, the period of the kernel.
+        order (int): The number of cosine terms in the approximation.
+        sigma (Scalar, optional): Kernel amplitude.
+        **kwargs: Extra keyword arguments forwarded to ``LowRank``.
+
+    Returns:
+        JAXArray: ``LowRank`` covariance object.
+    """
 
 
     # if order is None:
