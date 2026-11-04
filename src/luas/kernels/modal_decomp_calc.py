@@ -5,6 +5,18 @@ from scipy.special import gammaln
 
 
 def state_space_matrices_from_coeffs(h_coeffs):
+    r"""Builds the state space matrices of a linear stochastic differential equation from the coefficients of its
+    characteristic polynomial, :math:`s^m + h_{m-1}s^{m-1} + \dots + h_0`.
+
+    Args:
+        h_coeffs (JAXArray): The coefficients :math:`(h_0, h_1, \dots, h_{m-1})`.
+
+    Returns:
+        (JAXArray, JAXArray): The feedback matrix :math:`\mathbf{F}` in companion form, and the stationary
+        covariance :math:`\mathbf{P}_\infty` (from the continuous Lyapunov equation, using ``scipy``) normalised
+        so its first element is one.
+
+    """
     order = len(h_coeffs)
 
     F_ref = jnp.diag(jnp.ones(order-1), k = 1)
@@ -19,6 +31,20 @@ def state_space_matrices_from_coeffs(h_coeffs):
 
 
 def modal_decomp_SDE(h_coeffs):
+    r"""Calculates the modal decomposition of a linear stochastic differential equation, which writes it as a sum
+    of independent modes: one for each real root of the characteristic polynomial and one for each complex
+    conjugate pair.
+
+    Args:
+        h_coeffs (JAXArray): The coefficients :math:`(h_0, h_1, \dots, h_{m-1})` of the characteristic polynomial.
+
+    Returns:
+        tuple: ``(T_modal, T_modal_inv, all_real_parts, imag_parts, F_ref, P_inf_ref)``: the (real) transformation
+        to the modal basis and its inverse, the real parts of the roots (real roots first), the imaginary parts
+        of the complex roots, and the feedback matrix and stationary covariance from
+        :func:`state_space_matrices_from_coeffs`.
+
+    """
 
     order = len(h_coeffs)
 
@@ -81,6 +107,17 @@ def modal_decomp_SDE(h_coeffs):
 
 
 def get_stable_roots(power_spec_coeffs, order):
+    r"""Returns the stable roots (negative real part) of a power spectrum polynomial. If there aren't exactly
+    ``order`` of them, the ``order`` roots with the smallest real parts are used.
+
+    Args:
+        power_spec_coeffs (JAXArray): Coefficients of the polynomial, highest power first.
+        order (int): The number of roots to return.
+
+    Returns:
+        JAXArray: The stable roots.
+
+    """
     roots = jnp.roots(power_spec_coeffs, strip_zeros=False)
     
     tol = 1e-10
@@ -92,6 +129,16 @@ def get_stable_roots(power_spec_coeffs, order):
     return stable
 
 def stoc_diff_coeffs_from_roots(stable):
+    r"""Returns the coefficients :math:`(h_0, h_1, \dots, h_{m-1})` of the monic polynomial with the given roots,
+    i.e. the characteristic polynomial of the corresponding stochastic differential equation.
+
+    Args:
+        stable (JAXArray): The roots.
+
+    Returns:
+        JAXArray: The real coefficients, lowest power first, without the leading one.
+
+    """
     monic_desc = jnp.poly(stable)  # [1, a_{p-1}, ..., a0]
     # monic_desc = np.real_if_close(monic_desc, tol=1e4).astype(np.float64)
     monic_desc = jnp.real(monic_desc)
@@ -99,6 +146,17 @@ def stoc_diff_coeffs_from_roots(stable):
 
 
 def get_modal_decomp(ps_coeffs):
+    r"""Calculates the modal decomposition of the stochastic differential equation whose power spectrum has the
+    given denominator polynomial, by taking its stable roots (see :func:`get_stable_roots` and
+    :func:`modal_decomp_SDE`).
+
+    Args:
+        ps_coeffs (JAXArray): Coefficients of the power spectrum denominator, highest power first.
+
+    Returns:
+        tuple: The outputs of :func:`modal_decomp_SDE`.
+
+    """
     order = len(ps_coeffs)//2
     stable = get_stable_roots(ps_coeffs, order)
     stoc_diff_coeffs = stoc_diff_coeffs_from_roots(stable)
@@ -109,6 +167,18 @@ def get_modal_decomp(ps_coeffs):
 
 
 def calc_sq_exp_denom_ps_coeffs(order):
+    r"""Calculates the polynomial used to approximate the squared exponential power spectrum: the Taylor
+    expansion of :math:`e^{\omega^2/2}` up to order ``order`` in :math:`\omega^2`, written in terms of
+    :math:`s` with :math:`\omega^2 = -s^2` and scaled by :math:`2^{\mathrm{order}}\,\mathrm{order}!`. Used to
+    precompute the modal decompositions of ``SquaredExpApprox``.
+
+    Args:
+        order (int): The order of the approximation.
+
+    Returns:
+        JAXArray: The ``2 * order + 1`` coefficients, highest power first.
+
+    """
     m = jnp.arange(order, -1, -1)
 
     log_coeffs = gammaln(order + 1) - gammaln(m + 1) + (order - m) * jnp.log(2)

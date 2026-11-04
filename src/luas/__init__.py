@@ -8,7 +8,7 @@ from luas.kernels.MultiLowRankKernel import MultiLowRankKernel
 from luas.kernels.DoubleMultiLowRankKernel import DoubleMultiLowRankKernel
 from luas.kernels.LuasPlusMultiLowRankKernel import LuasPlusMultiLowRankKernel
 from luas.kernels.ExtendedLuasKernel import ExtendedLuasKernel
-from luas.kernels.LuasLasrachPlusPeriodicKernel import LuasLasrachPlusPeriodicKernel
 from luas.kernels.BlockKernel import BlockKernel
 from luas import kernels as kernels
 from luas.GP import GP
+import luas.priors

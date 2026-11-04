@@ -216,7 +216,7 @@ def logdetK_calc(stored_values: PyTree) -> Scalar:
         Scalar: The log determinant of the covariance matrix ``K``.
     """
     
-    return stored_values["logdetK"]
+    return stored_values["logdet"]
 
 @logdetK_calc.defjvp
 def logdetK_derivative(
@@ -256,7 +256,7 @@ def logdetK_derivative(
     K_deriv += jnp.outer(W_Sl_W_diag, W_St_W_diag_dot)
 
     # custom_jvp requires we return the value as well as the derivative as a tuple
-    return stored_values["logdetK"], jnp.multiply(D_inv, K_deriv).sum()
+    return stored_values["logdet"], jnp.multiply(D_inv, K_deriv).sum()
 
 
 @custom_jvp
@@ -280,7 +280,7 @@ def logdetK_calc_hessianable(
         Scalar: The log determinant of the covariance matrix ``K`` as a Scalar.
     """
     
-    return stored_values["logdetK"]
+    return stored_values["logdet"]
 
 
 @logdetK_calc_hessianable.defjvp
@@ -349,7 +349,7 @@ def logdetK_calc_hessianable_derivative(
     K_deriv -= kron_prod(no_deriv(W_Sl_W)*no_deriv(W_Kl_W_dot.T), must_deriv(W_St_W)*no_deriv(W_Kt_W.T), D_inv)
 
     # custom_jvp requires we return the value as well as the derivative as a tuple
-    return stored_values["logdetK"], jnp.multiply(D_inv, K_deriv).sum()
+    return stored_values["logdet"], jnp.multiply(D_inv, K_deriv).sum()
 
 
 @custom_jvp

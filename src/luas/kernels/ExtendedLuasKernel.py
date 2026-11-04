@@ -1,47 +1,173 @@
 import jax.numpy as jnp
 import jax
 from typing import Callable, Tuple, Union, Any, Optional
-import matplotlib.pyplot as plt
 
-from luas.kernels.covtype import Outer, Exp, GeneralQuasisep, CovType, Identity, ScaledIdentity, Diagonal, General
+import luas.kernels
+from luas.kernels.covtype import CovType, Identity, Diagonal, Outer
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar, is_scalar
 from luas.kronecker_fns import tensor_mult, vmap_for_tensors, cyclic_transpose
 from luas.kernel_interface import read_K_list_2D
-from luas.kernels.householder import orthonormal_nullspace_gen
+from luas.kernels.householder import householder_qr
 from luas.kernels.BlockKernel import Block2x2Kernel
 from luas.kernels.GeneralKernel import GeneralKernel
 from luas.kernels.LuasPlusMultiLowRankKernel import LuasPlusMultiLowRankKernel
 from luas.stable_gradients import stable_eigh
-import luas.kernels
 
 __all__ = [
     "ExtendedLuasKernel",
 ]
 
 class ExtendedLuasKernel(CovType):
-    
+    r"""The most general Kronecker kernel optimisation: measurement covariance, a
+    full-rank 2D kernel term, and low-rank kernel terms along both dimensions.
+
+    Handles kernel functions of the form
+
+    .. math::
+
+        k(\lambda, \lambda', t, t') &= s_\lambda(\lambda, \lambda')\, s_t(t, t')
+        + k_{\lambda; \mathrm{2D}}(\lambda, \lambda')\, k_{t; \mathrm{2D}}(t, t') \\
+        &+ \sum_{i=1}^{N_\alpha} \alpha_i(\lambda)\alpha_i(\lambda')\, k_{t; i}(t, t')
+        + \sum_{j=1}^{N_\beta} k_{\lambda; j}(\lambda, \lambda')\, \beta_j(t)\beta_j(t'),
+
+    which on a rectangular grid gives the covariance matrix
+
+    .. math::
+
+        \mathbf{K} = \mathbf{\Sigma}_\lambda \otimes \mathbf{\Sigma}_t
+        + \mathbf{K}_{\lambda; \mathrm{2D}} \otimes \mathbf{K}_{t; \mathrm{2D}}
+        + \sum_{i=1}^{N_\alpha} \boldsymbol{\alpha}_{\lambda; i}
+        \boldsymbol{\alpha}_{\lambda; i}^T \otimes \mathbf{K}_{t; i}
+        + \sum_{j=1}^{N_\beta} \mathbf{K}_{\lambda; j} \otimes
+        \boldsymbol{\beta}_{t; j} \boldsymbol{\beta}_{t; j}^T.
+
+    All the other 2D Kronecker kernel optimisations in ``luas`` are special cases of
+    this kernel structure. Any valid kernels can be used, but no quasiseparable
+    structure is exploited, so it is best suited to modest dataset sizes or GPUs.
+
+    **Method.** Whitens with :math:`\mathbf{\Sigma}_\lambda` and
+    :math:`\mathbf{\Sigma}_t`, then applies a Householder QL decomposition to the
+    low-rank vectors along both dimensions. The transformed matrix is decomposed as
+    a 2x2 block matrix. The A block is handled by
+    :class:`luas.LuasPlusMultiLowRankKernel`, and the
+    :math:`\mathbf{C}\mathbf{A}^{-1}\mathbf{B}` term exploits sparsity in the
+    blocks. :math:`\mathbf{D} - \mathbf{C}\mathbf{A}^{-1}\mathbf{B}` is decomposed as
+    a general :math:`(N_\alpha N_t, N_\alpha N_t)` matrix.
+
+    **Runtime scaling.**
+
+    .. math::
+
+        \mathcal{O}\left((1 + N_\alpha^3) N_t^3 + (1 + N_\beta^3) N_\lambda^3
+        + N_\lambda N_t (N_\lambda + N_t + N_\alpha^2 + N_\beta^2)\right)
+
+    runtime and :math:`\mathcal{O}(N_\alpha^2 N_t^2 + N_\beta^2 N_\lambda^2 +
+    N_\alpha N_\beta N_\lambda N_t)` memory. For small :math:`N_\alpha`,
+    :math:`N_\beta` this is similar to :class:`luas.LuasKernel`. It can be
+    substantially faster on a GPU.
+
+    **Selection.** :class:`luas.GP` selects this optimisation automatically when the
+    kernel function returns the noise term, one full-rank 2D term, and low-rank
+    terms along both dimensions.
+
+    Warning:
+        Requires exactly one full-rank 2D term, at least one low-rank term along
+        each dimension, :math:`0 < N_\alpha < N_\lambda` and
+        :math:`0 < N_\beta < N_t`. The noise term must be positive definite and be
+        the **first** tuple returned by the kernel function. Low-rank terms are only
+        recognised as rank-1 outer products (e.g. ``luas.kernels.lowrank.Constant``
+        or ``luas.kernels.lowrank.Amplitude``).
+
+    Example:
+        Combining every type of term from the ``luas`` tutorial:
+
+        .. code-block:: python
+
+            def kf(p, X):
+                s_l = luas.kernels.Noise(jnp.exp(p["log_sigma"]))
+                s_l += jnp.exp(2*p["log_h_readout"][0]) * luas.kernels.Exp(jnp.exp(p["log_l_readout"][0]))
+                s_t = luas.kernels.KroneckerDelta()
+
+                # Full-rank 2D term with a wavelength-dependent amplitude
+                k_l = luas.kernels.lowrank.Amplitude(jnp.exp(p["log_h_l_vec"])) * luas.kernels.Matern52(jnp.exp(p["log_l_l"][0]))
+                k_t = luas.kernels.Matern32(jnp.exp(p["log_l_t"][0]))
+
+                # alpha term: fixed vector along wavelength, kernel in time (common-mode systematics)
+                alpha_l1 = luas.kernels.lowrank.Constant(jnp.exp(p["log_h_const"][0]))
+                k_t1 = luas.kernels.Matern32(jnp.exp(p["log_l_t1"][0]))
+
+                # beta term: fixed vector along time, kernel in wavelength (settling ramp)
+                k_l1 = jnp.exp(2*p["log_h_ramp"][0]) * luas.kernels.Matern32(jnp.exp(p["log_l_l_ramp"][0]))
+                settle_vec = jnp.exp(-(X[1] - X[1][0])/jnp.exp(p["log_l_t_ramp"][0]))
+                beta_t1 = luas.kernels.lowrank.Amplitude(settle_vec)
+
+                return (s_l, s_t), (k_l, k_t), (alpha_l1, k_t1), (k_l1, beta_t1)
+
+            gp = luas.GP(p, (x_l, x_t), kf = kf)  # Uses ExtendedLuasKernel
+
+    Args:
+        Sigma (tuple[CovType, CovType]): The covariance objects
+            :math:`(\mathbf{\Sigma}_\lambda, \mathbf{\Sigma}_t)` for the noise term.
+            Both must be positive definite.
+        *K_list (tuple[CovType, CovType]): Exactly one full-rank 2D term plus the
+            low-rank terms, each as a tuple with one covariance object per dimension.
+        use_stored_values (bool, optional): Currently unused.
+        **kwargs: Ignored, accepted so that all Kronecker kernels share a common
+            constructor interface.
+
+    See Also:
+        :class:`luas.LuasPlusMultiLowRankKernel` for low-rank terms along only one
+        dimension, which can exploit quasiseparable kernels.
+        :class:`luas.DoubleMultiLowRankKernel` for low-rank terms along both
+        dimensions without a full-rank 2D term.
+    """
+
     def __init__(
         self,
         Sigma,
         *K_list,
-        use_stored_values: Optional[bool] = True,
+        use_stored_values: Optional[bool] = False,
         **kwargs,
     ):
+        r"""Creates the kernel object, see the class docstring for the arguments."""
         
         self.Sigma = Sigma[0], Sigma[1]
         self.K_list = K_list
         self.opt_name = "ExtendedLuasKernel"
-
-        self.logL_hessianable = self.logL
-        self.decompose = self.decomp_no_stored_values
+        
+        # Have different decomposition functions depending on whether previous stored values
+        # are to be used to avoid recalculating eigendecompositions
+        if use_stored_values:
+            raise NotImplementedError("Use of pre-calculated stored values not yet implemented.")
+        else:
+            self.decompose = self.decompose_no_stored_values
     
     
 
-    def decomp_no_stored_values(
+    def decompose_no_stored_values(
         self,
         X: Tuple[JAXArray],
         stored_values: Optional[PyTree] = {},
     ) -> PyTree:
+        r"""Decomposes the covariance matrix.
+
+        Both dimensions are whitened by the noise term, and the low-rank vectors along each dimension are
+        transformed with a Householder QL decomposition. The transformed matrix is decomposed as a 2x2 block
+        matrix: the A block with :class:`luas.LuasPlusMultiLowRankKernel`, and the Schur complement
+        :math:`\mathbf{D} - \mathbf{C}\mathbf{A}^{-1}\mathbf{B}` as a general matrix, exploiting the sparsity of the
+        off-diagonal blocks.
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+
+        Returns:
+            (ExtendedLuasKernel, PyTree): Itself and the stored values, including ``"logdet"``.
+
+        Raises:
+            Exception: Unless :math:`0 < N_\alpha < N_\lambda` and :math:`0 < N_\beta < N_t`.
+
+        """
 
         self.N_l = X[0].shape[-1]
         self.N_t = X[1].shape[-1]
@@ -52,7 +178,9 @@ class ExtendedLuasKernel(CovType):
         self.N_beta = beta_mat.shape[1]
 
         # Required for this optimisation to work
-        assert 0 < self.N_alpha < self.N_l and 0 < self.N_beta < self.N_t 
+        kernel_valid = 0 < self.N_alpha < self.N_l and 0 < self.N_beta < self.N_t
+        if not kernel_valid:
+            raise Exception("ExtendedLuasKernel requires 0 < N_alpha < N_l and 0 < N_beta < N_t for a dataset of shape (N_l, N_t).")
 
         ######### Do transforms in both dims #########
         # Decompose slow Sigma mat and add its contribution to the log determinant
@@ -67,8 +195,8 @@ class ExtendedLuasKernel(CovType):
         beta_mat = self.Sigma_transf[1].matrix_inv_sqrt(beta_mat)
         
         # Get Householder transform of all Outer covariances
-        self.J_A, stored_values["U_A"], self.householder_transform_A = orthonormal_nullspace_gen(alpha_mat, reverse = True)
-        self.J_B, stored_values["U_B"], self.householder_transform_B = orthonormal_nullspace_gen(beta_mat, reverse = True)
+        self.J_A, stored_values["U_A"], self.householder_transform_A = householder_qr(alpha_mat, reverse = True)
+        self.J_B, stored_values["U_B"], self.householder_transform_B = householder_qr(beta_mat, reverse = True)
         
         ####### Transform kernels #######
 
@@ -183,6 +311,20 @@ class ExtendedLuasKernel(CovType):
         transpose = 0,
         **kwargs,
     ) -> JAXArray:
+        r"""Multiplies by the off-diagonal B block of the transformed covariance matrix (or its transpose if
+        ``transpose = 1``) without building it: the full-rank 2D term plus the low-rank terms along dimension 1,
+        which only affect the last :math:`N_\beta` columns. Requires :meth:`decompose` to have been called.
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns.
+            R (JAXArray): The array to multiply.
+            transpose (int, optional): Whether to multiply by the transpose. Defaults to 0.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         if transpose:
             R_prime = self.K_transf0_B.T @ R
@@ -304,18 +446,12 @@ class ExtendedLuasKernel(CovType):
 
         return C_A_inv_B + C_A_inv_B2
     
-
-    def _calc_C_A_inv_B_unopt(self, kf_A, X):
-        B_mat_dense = self.kf_B_eval(X, X)
-        L_A_inv_B = jnp.zeros_like(B_mat_dense)
-        for i in range(B_mat_dense.shape[1]):
-            B_vec = B_mat_dense[:, i].reshape((self.N_l - self.N_alpha, self.N_t))
-            L_A_inv_B = L_A_inv_B.at[:, i].set(kf_A.matrix_inv_sqrt(B_vec).ravel())
-        C_A_inv_B = L_A_inv_B.T @ L_A_inv_B
-
-        return C_A_inv_B
     
     def kf_B_eval(self, X1, X2):
+        r"""Builds the off-diagonal B block of the transformed covariance matrix as a dense matrix (see
+        :meth:`K_B_matmul`).
+
+        """
         K_B = jnp.kron(self.K_transf0_B, self.K_transf[1].evaluate(X1[1], X2[1])) 
         
         for j in range(self.N_beta):
@@ -327,6 +463,11 @@ class ExtendedLuasKernel(CovType):
     
 
     def transform_fn(self, R, transpose = 0):
+        r"""Applies the transformation :math:`\mathbf{T}` (or :math:`\mathbf{T}^T` if ``transpose = 1``): along each
+        dimension, the matrix square root of the noise covariance combined with the Householder transformation of
+        that dimension's low-rank vectors. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.Sigma_transf[0].matrix_sqrt(R, transpose = 1)
@@ -348,6 +489,10 @@ class ExtendedLuasKernel(CovType):
 
 
     def inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse transformation :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if ``transpose = 1``),
+        see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
         
         if transpose:
             R_prime = self.householder_transform_A(R, transpose = 1)
@@ -373,6 +518,11 @@ class ExtendedLuasKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}` (or :math:`\mathbf{L}^T` if
+        ``transpose = 1``), where :math:`\mathbf{T}` is applied by :meth:`transform_fn` and :math:`\tilde{\mathbf{L}}` is the matrix
+        square root of the transformed covariance matrix. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -389,6 +539,10 @@ class ExtendedLuasKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = \tilde{\mathbf{L}}^{-1}\mathbf{T}^{-1}` (or :math:`\mathbf{L}^{-T}` if
+        ``transpose = 1``), see :meth:`matrix_sqrt`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self.kf_tilde.matrix_inv_sqrt(R, transpose = 1)
@@ -401,6 +555,19 @@ class ExtendedLuasKernel(CovType):
        
 
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying the noise
+        term and every other Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The data-shaped array to multiply.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product.
+
+        """
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
 

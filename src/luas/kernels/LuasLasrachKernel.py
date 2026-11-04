@@ -1,19 +1,10 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import jax.numpy as jnp
-import jax
-from jax import grad, value_and_grad, hessian, vmap, custom_jvp, jit, lax
-from jax.flatten_util import ravel_pytree
-from copy import deepcopy
-from tqdm import tqdm
 from typing import Callable, Tuple, Union, Any, Optional
-from functools import partial
 
-from luas.kernels.covtype import CovType, Outer, Identity, ScaledIdentity, Diagonal
+from luas.kernels.covtype import CovType, Outer, Identity, Diagonal
 from luas.luas_types import Kernel, PyTree, JAXArray, Scalar
-from luas.kronecker_fns import kron_prod, calc_total_size, cyclic_transpose, vmap_for_tensors, tensor_mult
-from luas.jax_convenience_fns import array_to_pytree_2D, get_corr_mat
-from luas.kernels.WhiteNoiseKernel import WhiteNoiseKernel
+from luas.kronecker_fns import calc_total_size, cyclic_transpose, vmap_for_tensors, tensor_mult
 from luas.kernels.SeparableKernel import SeparableKernel
 from luas.kernels.BlockKernel import Block2x2Kernel, BlockKernel
 
@@ -22,17 +13,158 @@ __all__ = [
 ]
 
 class LuasLasrachKernel(CovType):
-    
+    r"""GP optimisation for a covariance matrix that is the sum of two Kronecker
+    products, which decouples a 2D GP into independent 1D GPs along one "fast"
+    dimension.
+
+    Handles the same kernel structure as :class:`luas.LuasKernel`,
+
+    .. math::
+
+        k(\lambda, \lambda', t, t') = s_\lambda(\lambda, \lambda')\, s_t(t, t')
+        + k_\lambda(\lambda, \lambda')\, k_t(t, t'),
+        \qquad
+        \mathbf{K} = \mathbf{\Sigma}_\lambda \otimes \mathbf{\Sigma}_t
+        + \mathbf{K}_\lambda \otimes \mathbf{K}_t,
+
+    but only performs simultaneous diagonalisation in the dimension(s) other than
+    ``fast_dim``. Writing the fast dimension as time :math:`t`,
+
+    .. math::
+
+        \mathbf{K} = [\mathbf{\Sigma}_\lambda^{\frac{1}{2}} \mathbf{Q}_{K'_\lambda}
+        \otimes \mathbf{I}_{N_t}]\,
+        [\mathbf{I}_{N_\lambda} \otimes \mathbf{\Sigma}_t
+        + \mathbf{\Lambda}_{K'_\lambda} \otimes \mathbf{K}_t]\,
+        [\mathbf{\Sigma}_\lambda^{\frac{1}{2}} \mathbf{Q}_{K'_\lambda}
+        \otimes \mathbf{I}_{N_t}]^T,
+
+    where :math:`\mathbf{K}'_\lambda = \mathbf{\Sigma}_\lambda^{-\frac{1}{2}}
+    \mathbf{K}_\lambda \mathbf{\Sigma}_\lambda^{-\frac{T}{2}}`. The middle matrix is
+    block-diagonal, so the log-likelihood becomes a sum of independent 1D GP
+    log-likelihoods, one per eigenvalue :math:`\lambda_{K'_\lambda; i}`, each with
+    covariance :math:`\mathbf{\Sigma}_t + \lambda_{K'_\lambda; i} \mathbf{K}_t`. These
+    blocks are never eigendecomposed, so any fast 1D method valid for that sum can
+    be used, e.g. quasiseparable (``tinygp``/celerite) Cholesky decompositions in
+    linear time. The blocks are decomposed in parallel with ``jax.vmap`` (or
+    ``jax.pmap``).
+
+    If :math:`\mathbf{K}_\lambda` is low-rank with rank :math:`R_\lambda` (e.g. a
+    ``luas.kernels.lowrank`` kernel), only :math:`R_\lambda` blocks contain
+    :math:`\mathbf{K}_t` and the remaining blocks reduce to :math:`\mathbf{\Sigma}_t`,
+    which is exploited automatically.
+
+    This optimisation also works for more than two dimensions: every dimension
+    other than ``fast_dim`` is simultaneously diagonalised.
+
+    **Runtime scaling (2D, fast dimension** :math:`t` **).** With quasiseparable
+    :math:`\mathbf{\Sigma}_t` and :math:`\mathbf{K}_t` of rank :math:`J_{K_t}`:
+
+    - Arbitrary :math:`\mathbf{\Sigma}_\lambda`, :math:`\mathbf{K}_\lambda`:
+      :math:`\mathcal{O}(N_\lambda^3 + N_\lambda^2 N_t + R_\lambda N_t J_{K_t}^2)`.
+    - Quasiseparable :math:`\mathbf{\Sigma}_\lambda` (rank :math:`J_{\Sigma_\lambda}`):
+      the decomposition and transformation by :math:`\mathbf{\Sigma}_\lambda`
+      drop to :math:`\mathcal{O}(N_\lambda J_{\Sigma_\lambda}^2 + N_\lambda N_t
+      J_{\Sigma_\lambda})`, but the eigendecomposition of
+      :math:`\mathbf{K}'_\lambda` (:math:`\mathcal{O}(N_\lambda^3)`) and applying
+      its dense eigenvector matrix to the residuals
+      (:math:`\mathcal{O}(N_\lambda^2 N_t)`) remain. Both are avoided only for a
+      rank-1 ``lowrank.Constant``/``lowrank.Amplitude`` term, which uses a
+      Householder transformation instead, giving
+      :math:`\mathcal{O}(N_\lambda J_{\Sigma_\lambda}^2 + N_\lambda N_t
+      J_{\Sigma_\lambda} + N_t J_{K_t}^2)`.
+
+    If the fast-dimension kernels are not quasiseparable, each block costs a general
+    :math:`\mathcal{O}(N_t^3)` Cholesky decomposition, which can still beat the
+    :math:`\mathcal{O}(N_t^3)` eigendecomposition in :class:`luas.LuasKernel` when
+    :math:`R_\lambda` is small or many parallel workers (e.g. a GPU) are available.
+
+    **Selection.** :class:`luas.GP` selects this optimisation automatically for two
+    Kronecker terms with no low-rank terms when all kernels along the longer
+    dimension are quasiseparable or diagonal (setting ``fast_dim`` to that
+    dimension). It is also selected when *neither* dimension is
+    quasiseparable/diagonal but the shorter dimension has fewer than
+    ``max_gen_cholesky_blocks`` points (default 10). A single low-rank term
+    (e.g. ``luas.kernels.lowrank.Constant``) is instead routed to
+    :class:`luas.MultiLowRankKernel`, which reduces to the same optimisation.
+
+    Warning:
+        :math:`\mathbf{\Sigma}_\lambda` and :math:`\mathbf{\Sigma}_t` must be positive
+        definite and must be the **first** tuple returned by the kernel function.
+        Along ``fast_dim``, :math:`\mathbf{\Sigma}_t` and :math:`\mathbf{K}_t` are
+        scaled and added together, so they must be compatible covariance types
+        (e.g. both from ``luas.kernels.quasisep``/``luas.kernels.diagonal`` to get a
+        linear-time decomposition, or both general).
+
+    Example:
+        Measurement covariance plus a 2D kernel term, quasiseparable in time (from
+        the ``luas`` tutorial):
+
+        .. code-block:: python
+
+            def kf(p, X):
+                s_l = luas.kernels.quasisep.Noise(jnp.exp(p["log_sigma"]))
+                s_l += jnp.exp(2*p["log_h_readout"][0]) * luas.kernels.quasisep.Exp(jnp.exp(p["log_l_readout"][0]))
+                s_t = luas.kernels.quasisep.KroneckerDelta()
+
+                # Eigendecomposed, so quasisep gives no speed-up here
+                k_l = jnp.exp(2*p["log_h"][0]) * luas.kernels.Matern52(jnp.exp(p["log_l_l"][0]))
+
+                # Keep quasiseparable for linear scaling in time
+                k_t = luas.kernels.quasisep.Matern32(jnp.exp(p["log_l_t"][0]))
+
+                return (s_l, s_t), (k_l, k_t)
+
+            # Uses LuasLasrachKernel with fast_dim = 1 (assuming N_t >= N_l)
+            gp = luas.GP(p, (x_l, x_t), kf = kf)
+
+            # Or explicitly:
+            gp = luas.GP(p, (x_l, x_t), kf = kf, use_kernel = luas.LuasLasrachKernel, fast_dim = 1)
+
+    Args:
+        Sigma (tuple[CovType, ...]): One positive definite covariance object per
+            dimension for the first Kronecker product term.
+        K (tuple[CovType, ...]): One covariance object per dimension for the second
+            Kronecker product term. May be positive semi-definite or low-rank.
+        fast_dim (int): **Required.** The dimension which is decomposed as
+            independent 1D GPs and is never eigendecomposed. Choose the dimension
+            where :math:`\mathbf{\Sigma}` and :math:`\mathbf{K}` have fast
+            decompositions (e.g. quasiseparable kernels), typically the longer one.
+            Must be passed as a keyword argument to :class:`luas.GP` when using
+            ``use_kernel = luas.LuasLasrachKernel``.
+        use_stored_values (bool, optional): Reusing stored decompositions is not yet
+            implemented; must be ``False`` (the default) or an exception is raised.
+        use_pmap (bool, optional): Experimental, and not currently working. Intended
+            to decompose the independent blocks across multiple devices with
+            ``jax.pmap`` rather than ``jax.vmap`` (requiring at least as many devices
+            as blocks). Defaults to ``False``.
+        **kwargs: Ignored, accepted so that all Kronecker kernels share a common
+            constructor interface.
+
+    See Also:
+        :class:`luas.LuasKernel` for the same kernel structure using
+        eigendecomposition in both dimensions.
+        :class:`luas.MultiLowRankKernel`, which reduces to this optimisation for a
+        single low-rank term and generalises it to several.
+        :class:`luas.LuasPlusMultiLowRankKernel` for adding low-rank terms.
+    """
+
     def __init__(
         self,
         Sigma,
         K,
+        *, # force keyword only after this
         fast_dim: int | None = None,
         use_stored_values: Optional[bool] = False,
         use_pmap = False,
         **kwargs,
     ):
-        assert fast_dim is not None # Must specify the fast_dim
+        r"""Creates the kernel object, see the class docstring for the arguments."""
+        if fast_dim is None:
+            # Must specify the fast_dim
+            raise Exception("Must specify fast_dim, which is the dimension which will not be eigendecomposed/simultaneously diagonlised.\
+                            Typically this dimension should be fast to decompose e.g. using luas.kernels.quasisep, or else the other dimension should be small.")
+
         self.Sigma = Sigma
         self.K = K
         self.fast_dim = fast_dim
@@ -43,9 +175,27 @@ class LuasLasrachKernel(CovType):
         # Have different decomposition functions depending on whether previous stored values
         # are to be used to avoid recalculating eigendecompositions
         if use_stored_values:
-            raise Exception("Use of precalculated stored values not yet implemented")
+            raise NotImplementedError("Use of pre-calculated stored values not yet implemented.")
+        else:
+            self.decompose = self.decompose_no_stored_values
     
     def evaluate(self, X1, X2, full = True, row_idx = None, col_idx = None, **kwargs):
+        r"""Builds the full dense covariance matrix, :math:`\bigotimes_d \mathbf{\Sigma}_d + \bigotimes_d \mathbf{K}_d`.
+        Only practical for small data sets.
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns.
+            full (bool, optional): Whether to evaluate the full matrices along each dimension, otherwise the
+                sub-matrices given by ``row_idx`` and ``col_idx``. Defaults to ``True``.
+            row_idx (tuple, optional): Row indices along each dimension if ``full = False``.
+            col_idx (tuple, optional): Column indices along each dimension if ``full = False``.
+            **kwargs: Passed to each covariance object's ``evaluate`` method, e.g. ``wn``.
+
+        Returns:
+            JAXArray: The covariance matrix, ordered as the row-major (``"C"``) flattening of the data array.
+
+        """
 
         dim = len(X1)
 
@@ -68,11 +218,31 @@ class LuasLasrachKernel(CovType):
         return Sigma
     
 
-    def decompose(
+    def decompose_no_stored_values(
         self,
         X: Tuple,
         stored_values: Optional[PyTree] = None,
     ) -> PyTree:
+        r"""Decomposes the covariance matrix.
+
+        Along every dimension except ``fast_dim``, :math:`\mathbf{\Sigma}_d` is decomposed, :math:`\mathbf{K}_d` is
+        whitened by it and the result eigendecomposed, as for :class:`luas.LuasKernel`. In this transformed basis
+        the covariance matrix becomes block diagonal, with one block per combination of eigenvalues along the
+        other dimensions: :math:`\mathbf{\Sigma}_{\mathrm{fast}} + \lambda\mathbf{K}_{\mathrm{fast}}`. These
+        independent blocks along ``fast_dim`` are decomposed with ``BlockKernel`` using their own (e.g.
+        quasiseparable) decompositions. If :math:`\tilde{\mathbf{K}}_d` is low rank, only the blocks with non-zero
+        eigenvalues need this, and the rest only need :math:`\mathbf{\Sigma}_{\mathrm{fast}}` (see
+        ``Block2x2Kernel``).
+
+        Args:
+            X (tuple): Input locations along each dimension.
+            stored_values (PyTree, optional): Dictionary the stored values are added to.
+
+        Returns:
+            (LuasLasrachKernel, PyTree): Itself and the stored values, including ``"logdet"`` and the eigenvalues
+            ``"lam_d"``, eigenvectors ``"Q_d"`` and rank ``"rank_d"`` along each dimension except ``fast_dim``.
+
+        """
 
         total_size = calc_total_size(X)
         self.dim = len(X)
@@ -151,6 +321,14 @@ class LuasLasrachKernel(CovType):
 
 
     def transform_fn(self, R, transpose = 0):
+        r"""Applies the transformation :math:`\mathbf{T}` along every dimension except ``fast_dim`` (or
+        :math:`\mathbf{T}^T` if ``transpose = 1``), where along each such dimension it is :math:`\mathbf{L}_d\mathbf{Q}_d`:
+        the matrix square root of :math:`\mathbf{\Sigma}_d` times the eigenvectors of the whitened
+        :math:`\tilde{\mathbf{K}}_d`. The matrix square root of the covariance matrix is
+        :math:`\mathbf{T}\tilde{\mathbf{L}}`, where :math:`\tilde{\mathbf{L}}` is the matrix square root of the
+        independent blocks along ``fast_dim``. Requires :meth:`decompose` to have been called.
+
+        """
         
         R_prime = cyclic_transpose(R, 2)
 
@@ -173,6 +351,10 @@ class LuasLasrachKernel(CovType):
 
 
     def inv_transform_fn(self, R, transpose = 0):
+        r"""Applies the inverse transformation :math:`\mathbf{T}^{-1}` (or :math:`\mathbf{T}^{-T}` if ``transpose = 1``),
+        see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
         R_prime = cyclic_transpose(R, 2)
 
         if transpose:
@@ -193,6 +375,18 @@ class LuasLasrachKernel(CovType):
     
 
     def _calc_in_flat_fast_dim(self, fn, R, **kwargs):
+        r"""Applies ``fn`` to ``R`` after rotating ``fast_dim`` to the last axis and flattening every other axis into
+        one, so ``fn`` acts on a 2D array of shape ``(N_other, N_fast)``. The result is reshaped and rotated back.
+
+        Args:
+            fn (Callable): The function to apply, e.g. a matrix square root of the blocks along ``fast_dim``.
+            R (JAXArray): The data-shaped array.
+            **kwargs: Passed to ``fn``.
+
+        Returns:
+            JAXArray: The result, with the same shape as ``R``.
+
+        """
         
         R_rot = cyclic_transpose(R, -(self.dim-self.fast_dim-1))
         R_rot_shape = R_rot.shape
@@ -210,6 +404,11 @@ class LuasLasrachKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by the matrix square root :math:`\mathbf{L} = \mathbf{T}\tilde{\mathbf{L}}` (or
+        :math:`\mathbf{L}^T` if ``transpose = 1``), see :meth:`transform_fn`. Requires :meth:`decompose` to have
+        been called.
+
+        """
 
         if transpose:
             R_prime = self.transform_fn(R, transpose = 1)
@@ -226,6 +425,10 @@ class LuasLasrachKernel(CovType):
         R: JAXArray,
         transpose = 0,
     ) -> JAXArray:
+        r"""Multiplies ``R`` by :math:`\mathbf{L}^{-1} = \tilde{\mathbf{L}}^{-1}\mathbf{T}^{-1}` (or :math:`\mathbf{L}^{-T}`
+        if ``transpose = 1``), see :meth:`transform_fn`. Requires :meth:`decompose` to have been called.
+
+        """
 
         if transpose:
             R_prime = self._calc_in_flat_fast_dim(self.kf_tilde.matrix_inv_sqrt, R, transpose = 1)
@@ -237,195 +440,86 @@ class LuasLasrachKernel(CovType):
         return R_prime
 
     def matmul(self, X1, X2, R, **kwargs):
+        r"""Multiplies the data-shaped array ``R`` by the covariance matrix without building it, by applying each
+        Kronecker term along each dimension (see :func:`luas.kronecker_fns.tensor_mult`).
+
+        Args:
+            X1 (tuple): Input locations along each dimension for the rows.
+            X2 (tuple): Input locations along each dimension for the columns, matching the shape of ``R``.
+            R (JAXArray): The array to multiply, with one axis per dimension.
+            **kwargs: Passed to each covariance object's ``matmul`` method, e.g. ``wn = False``.
+
+        Returns:
+            JAXArray: The product, with one axis per dimension.
+
+        """
 
         K_R = tensor_mult(self.Sigma, X1, X2, R, **kwargs)
         K_R += tensor_mult(self.K, X1, X2, R, **kwargs)
         
         return K_R
 
-    def fast_LA(self, D_tensor, b_mat, stored_values, vec_dim = 1):
+
+    # def fast_LA(self, D_tensor, b_mat, stored_values, vec_dim = 1):
         
-        assert self.dim == 2
+    #     assert self.dim == 2
         
-        N_b, N_l, N_t = D_tensor.shape
+    #     N_b, N_l, N_t = D_tensor.shape
 
-        assert b_mat.shape == (N_b, D_tensor.shape[vec_dim+1])
+    #     assert b_mat.shape == (N_b, D_tensor.shape[vec_dim+1])
 
-        b_vecs_transf = self.sigma_decomp_mats[vec_dim].matrix_inv_sqrt(b_mat.T, transpose = 0)
-        b_vecs_transf = (self.eigen_decomp_mats[vec_dim].T @ b_vecs_transf).T
+    #     b_vecs_transf = self.sigma_decomp_mats[vec_dim].matrix_inv_sqrt(b_mat.T, transpose = 0)
+    #     b_vecs_transf = (self.eigen_decomp_mats[vec_dim].T @ b_vecs_transf).T
 
-        block_dot_solve_vmap = jax.vmap(jax.vmap(self.kf_tilde.block_dot_solve, in_axes = (0, None, None)), in_axes = (None, 0, None))
-        diag_tilde_tensor = self.kf_tilde.block_dot_solve(b_vecs_transf, b_vecs_transf, vec_dim)
+    #     block_dot_solve_vmap = jax.vmap(jax.vmap(self.kf_tilde.block_dot_solve, in_axes = (0, None, None)), in_axes = (None, 0, None))
+    #     diag_tilde_tensor = self.kf_tilde.block_dot_solve(b_vecs_transf, b_vecs_transf, vec_dim)
 
-        def D_transform_fn(D_tensor):
-            D_tensor_tilde = cyclic_transpose(D_tensor, 2)
-            for d in range(self.dim):
-                if d != vec_sim:
-                    D_tensor_tilde = self.sigma_decomp_mats[vec_dim].matrix_inv_sqrt(D_tensor_tilde)
-                    D_tensor_tilde = self.eigen_decomp_mats[vec_dim].T @ D_tensor_tilde
-                    D_tensor_tilde = cyclic_transpose(D_tensor_tilde, 1)
-            D_tensor_tilde = cyclic_transpose(D_tensor_tilde, -2)
+    #     def D_transform_fn(D_tensor):
+    #         D_tensor_tilde = cyclic_transpose(D_tensor, 2)
+    #         for d in range(self.dim):
+    #             if d != vec_sim:
+    #                 D_tensor_tilde = self.sigma_decomp_mats[vec_dim].matrix_inv_sqrt(D_tensor_tilde)
+    #                 D_tensor_tilde = self.eigen_decomp_mats[vec_dim].T @ D_tensor_tilde
+    #                 D_tensor_tilde = cyclic_transpose(D_tensor_tilde, 1)
+    #         D_tensor_tilde = cyclic_transpose(D_tensor_tilde, -2)
 
-            return D_tensor_tilde
+    #         return D_tensor_tilde
 
-        D_tensor_tilde = jax.vmap(D_transform_fn, in_axes = 0)(D_tensor)
+    #     D_tensor_tilde = jax.vmap(D_transform_fn, in_axes = 0)(D_tensor)
 
-        T_tilde = jnp.tensordot(diag_tilde_tensor, D_tensor_tilde, axes = ([0], [0]))
-        TKT = jnp.tensordot(D_tensor_tilde.T, T_tilde, axes = ([0], [0]))
+    #     T_tilde = jnp.tensordot(diag_tilde_tensor, D_tensor_tilde, axes = ([0], [0]))
+    #     TKT = jnp.tensordot(D_tensor_tilde.T, T_tilde, axes = ([0], [0]))
         
 
-        # Calc celerite block inverse times each time vector
-        b_vecs = jnp.kron(b_mat, jnp.ones((N_l, 1, 1)))
-        L_inv_b = calc_Linv_mat_vmap(*stored_values["cel_decomp"], b_vecs)
+    #     # Calc celerite block inverse times each time vector
+    #     b_vecs = jnp.kron(b_mat, jnp.ones((N_l, 1, 1)))
+    #     L_inv_b = calc_Linv_mat_vmap(*stored_values["cel_decomp"], b_vecs)
 
-        # Multiply each pair of time vectors and sum over time dimension
-        # Computes diagonal entries of diagonal matrices D_ij
-        D_ij = L_inv_b[None, :, :, :] * L_inv_b[:, None, :, :]
-        D_ij = D_ij.sum(3)
+    #     # Multiply each pair of time vectors and sum over time dimension
+    #     # Computes diagonal entries of diagonal matrices D_ij
+    #     D_ij = L_inv_b[None, :, :, :] * L_inv_b[:, None, :, :]
+    #     D_ij = D_ij.sum(3)
         
-        # JAX/NumPy treats tensor matrix multiplication as if it is a stack of matrices stored in last two dimensions
-        # Which works here as D_tensor is of shape (N_b, N_l, N_l)
-        W_l_D = stored_values["W_l"].T @ D_tensor
+    #     # JAX/NumPy treats tensor matrix multiplication as if it is a stack of matrices stored in last two dimensions
+    #     # Which works here as D_tensor is of shape (N_b, N_l, N_l)
+    #     W_l_D = stored_values["W_l"].T @ D_tensor
         
-        # Dj_W_l_D shape will initially be (N_b, N_b, N_l, N_l)
-        Dj_W_l_D = D_ij[:, :, :, jnp.newaxis] * W_l_D[:, :, :]
+    #     # Dj_W_l_D shape will initially be (N_b, N_b, N_l, N_l)
+    #     Dj_W_l_D = D_ij[:, :, :, jnp.newaxis] * W_l_D[:, :, :]
 
-        # We then sum over axis 1, summing over j
-        Dj_W_l_D = Dj_W_l_D.sum(1)
+    #     # We then sum over axis 1, summing over j
+    #     Dj_W_l_D = Dj_W_l_D.sum(1)
 
-        # Must be careful to transpose W_l_D just along the two wavelength axes
-        # Broadcasting will result in N_b stacks of matrices multiplying together
-        TKT = jnp.transpose(W_l_D, (0, 2, 1)) @ Dj_W_l_D
+    #     # Must be careful to transpose W_l_D just along the two wavelength axes
+    #     # Broadcasting will result in N_b stacks of matrices multiplying together
+    #     TKT = jnp.transpose(W_l_D, (0, 2, 1)) @ Dj_W_l_D
 
-        # We then do our second sum over axis 0, summing over i
-        TKT = TKT.sum(0)
+    #     # We then do our second sum over axis 0, summing over i
+    #     TKT = TKT.sum(0)
 
-        # Finally we invert T.T K^-1 T to get our covariance matrix
-        Sigma_d = jnp.linalg.inv(TKT)
-        logdetSigma_d = -jnp.linalg.slogdet(TKT)[1]
+    #     # Finally we invert T.T K^-1 T to get our covariance matrix
+    #     Sigma_d = jnp.linalg.inv(TKT)
+    #     logdetSigma_d = -jnp.linalg.slogdet(TKT)[1]
     
-        return Sigma_d, logdetSigma_d
-    
-    
-    def predict(
-        self,
-        hp: PyTree,
-        x_l: JAXArray,
-        x_l_pred: JAXArray,
-        x_t: JAXArray,
-        x_t_pred: JAXArray,
-        R: JAXArray,
-        M_s: JAXArray,
-        wn = True,
-        return_std_dev = True,
-    ) -> Tuple[JAXArray, JAXArray]:
-        r"""Performs GP regression and computes the GP predictive mean and the GP predictive
-        uncertainty as the standard devation at each location or else can return the full
-        covariance matrix. Requires the input kernel function ``K`` to have a ``wn`` keyword
-        argument that defines the kernel when white noise is included (``wn = True``) and
-        when white noise isn't included (``wn = False``).
-        
-        Currently assumes the same input hyperparameters for both the observed and predicted
-        locations. The predicted locations ``x_l_pred`` and ``x_t_pred`` may deviate from
-        the observed locations ``x_l`` and ``x_t`` however.
-        
-        The GP predictive mean is defined as:
-        
-        .. math::
-
-            \mathbb{E}[\vec{y}_*] = \vec{\mu}_* + \mathbf{K}_*^T \mathbf{K}^{-1} \vec{r}
-            
-        And the GP predictive covariance is given by:
-        
-        .. math::
-            Var[\vec{y}_*] = \mathbf{K}_{**} - \mathbf{K}_*^T \mathbf{K}^{-1} \mathbf{K}_*
-        
-        Note:
-            The calculation of the full predictive covariance matrix when ``return_std_dev = False``
-            is still experimental and may come with numerically stability issues. It is also very
-            memory intensive and may cause code to crash. Future updates to luas may improve this.
-        
-        Args:
-            hp (Pytree): Hyperparameters needed to build the covariance matrices
-                ``Kl``, ``Kt``, ``Sl``, ``St``. Will be unaffected if additional mean function
-                parameters are also included.
-            x_l (JAXArray): Array containing wavelength/vertical dimension regression variable(s)
-                for the observed locations. May be of shape ``(N_l,)`` or ``(d_l,N_l)`` for ``d_l``
-                different wavelength/vertical regression variables.
-            x_l_pred (JAXArray): Array containing wavelength/vertical dimension regression variable(s)
-                for the prediction locations (which may be the same as the observed locations).
-                May be of shape ``(N_l_pred,)`` or ``(d_l,N_l_pred)`` for ``d_l`` different
-                wavelength/vertical regression variables.
-            x_t (JAXArray): Array containing time/horizontal dimension regression variable(s) for the
-                observed locations. May be of shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different
-                time/horizontal regression variables.
-            x_t_pred (JAXArray): Array containing time/horizontal dimension regression variable(s) for
-                the prediction locations (which may be the same as the observed locations). May be of
-                shape ``(N_t,)`` or ``(d_t,N_t)`` for ``d_t`` different time/horizontal regression variables.
-            R (JAXArray): Residuals to be fit, equal to the observed data minus the deterministic
-                mean function. Must have the same shape as the observed data ``(N_l, N_t)``.
-            M_s (JAXArray): Mean function evaluated at the locations of the predictions ``x_l_pred``, ``x_t_pred``.
-                Must have shape ``(N_l_pred, N_t_pred)`` where ``N_l_pred`` is the number of wavelength/vertical
-                dimension predictions and ``N_t_pred`` the number of time/horizontal dimension predictions.
-            wn (bool, optional): Whether to include white noise in the uncertainty at the predicted locations.
-                Defaults to True.
-            return_std_dev (bool, optional): If ``True`` will return the standard deviation of uncertainty at the predicted
-                locations. Otherwise will return the full predictive covariance matrix. Defaults to True.
-        
-        Returns:
-            (JAXArray, JAXArray): Returns a tuple of two elements, where the first element is
-            the GP predictive mean at the prediction locations, the second element is either the
-            standard deviation of the predictions if ``return_std_dev = True``, otherwise it will be
-            the full covariance matrix of the predicted values.
-        
-        """
-        # Calculate the decomposition of K
-        stored_values = self.decomp_fn(hp, x_l, x_t)
-        
-        # Calculate the covariance between the observed and predicted points
-        Kl_s = self.Kl.evaluate(hp, x_l, x_l_pred, wn = False)
-        Kt_s = self.Kt.evaluate(hp, x_t, x_t_pred, wn = False)
-        Sl_s = self.Sl.evaluate(hp, x_l, x_l_pred, wn = False)
-        St_s = self.St.evaluate(hp, x_t, x_t_pred, wn = False)
-        
-        # Calculate the covariance between predicted points with other predicted points
-        Kl_ss = self.Kl.evaluate(hp, x_l_pred, x_l_pred, wn = wn)
-        Kt_ss = self.Kt.evaluate(hp, x_t_pred, x_t_pred, wn = wn)
-        Sl_ss = self.Sl.evaluate(hp, x_l_pred, x_l_pred, wn = wn)
-        St_ss = self.St.evaluate(hp, x_t_pred, x_t_pred, wn = wn)
-
-        # Calculate K^-1 R
-        K_inv_R, stored_values = self.solve(hp, x_l, x_t, R, stored_values)
-
-        # Calculates the GP mean including the deterministic mean function at the prediction locations
-        gp_mean = M_s + kron_prod(Kl_s.T, Kt_s.T, K_inv_R) + kron_prod(Sl_s.T, St_s.T, K_inv_R)
-
-        # Prepare matrices for calculating the predictive covariance
-        KW_l = Kl_s.T @ stored_values["W_l"]
-        KW_t = Kt_s.T @ stored_values["W_t"]
-        SW_l = Sl_s.T @ stored_values["W_l"]
-        SW_t = St_s.T @ stored_values["W_t"]
-
-        if return_std_dev:
-            # Efficiently solves for the diagonal of the predictive covariance
-            pred_err = jnp.outer(jnp.diag(Kl_ss), jnp.diag(Kt_ss))
-            pred_err += jnp.outer(jnp.diag(Sl_ss), jnp.diag(St_ss))
-
-            # K_s.T K^-1 K_s term can be broken into these three terms
-            pred_err -= kron_prod(KW_l**2, KW_t**2, stored_values["D_inv"])
-            pred_err -= kron_prod(SW_l**2, SW_t**2, stored_values["D_inv"])
-            pred_err -= 2*kron_prod(KW_l * SW_l, KW_t * SW_t, stored_values["D_inv"])
-            
-            # Take the sqrt of the diagonal to get the std dev
-            pred_err = jnp.sqrt(pred_err)
-            
-        else:
-            # Note very memory intensive!
-            K_W = jnp.kron(KW_l, KW_t) + jnp.kron(SW_l, SW_t)
-            pred_err = -K_W @ jnp.diag(stored_values["D_inv"].ravel()) @ K_W.T
-            
-            # Add the K_ss term
-            pred_err += jnp.kron(Kl_ss, Kt_ss) + jnp.kron(Sl_ss, St_ss)
-        
-        return gp_mean, pred_err
+    #     return Sigma_d, logdetSigma_d
     
