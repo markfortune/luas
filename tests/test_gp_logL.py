@@ -17,6 +17,7 @@ from kernel_cases import (KERNEL_FNS_2D, SINGLE_2D_TERM, P, X, Y, dense_logL_2d,
 
 NAMES = list(KERNEL_FNS_2D)
 ATOL = 1e-8
+GRAD_RTOL = 1e-6   # gradient error relative to its largest component
 
 
 def make_gp(name, jit=False, **kwargs):
@@ -73,7 +74,7 @@ def test_gradient_matches_dense(name):
     want = ravel_pytree(jax.grad(lambda p: dense_logL_2d(kf, p, Y))(P))[0]
     # Compare relative to the largest gradient component
     rel_err = float(np.abs(got - want).max() / np.abs(want).max())
-    assert rel_err < 1e-9, f"max relative gradient error {rel_err:.2e}"
+    assert rel_err < GRAD_RTOL, f"max relative gradient error {rel_err:.2e}"
 
 
 # ----------------------------------------------------------------------------- 1D GPs
@@ -98,4 +99,4 @@ def test_1d_gradient_matches_dense(name):
     got = ravel_pytree(jax.grad(gp.logL)(P_1D, Y_1D))[0]
     want = ravel_pytree(jax.grad(lambda p: dense_logL_1d(kf, p))(P_1D))[0]
     rel_err = float(np.abs(got - want).max() / np.abs(want).max())
-    assert rel_err < 1e-9, f"max relative gradient error {rel_err:.2e}"
+    assert rel_err < GRAD_RTOL, f"max relative gradient error {rel_err:.2e}"

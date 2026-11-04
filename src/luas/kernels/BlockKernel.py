@@ -450,8 +450,8 @@ class Block2x2Kernel(CovType):
             X_D = (x_D, X[1])
 
             if idx is None:
-                idx_A = (jnp.arange(self.split_loc), jnp.arange(X[1].shape[-1]))
-                idx_D = (jnp.arange(self.split_loc, X[0].shape[-1]), jnp.arange(X[1].shape[-1]))
+                idx_A = (jnp.arange(X[0].shape[-1])[:self.split_loc], jnp.arange(X[1].shape[-1]))
+                idx_D = (jnp.arange(X[0].shape[-1])[self.split_loc:], jnp.arange(X[1].shape[-1]))
             else:
                 idx_A = (idx[0][:self.split_loc], idx[1])
                 idx_D = (idx[0][self.split_loc:], idx[1])
@@ -460,8 +460,8 @@ class Block2x2Kernel(CovType):
             X_D = (X[0], x_D)
 
             if idx is None:
-                idx_A = (jnp.arange(X[0].shape[-1]), jnp.arange(self.split_loc))
-                idx_D = (jnp.arange(X[0].shape[-1]), jnp.arange(self.split_loc, X[1].shape[-1]))
+                idx_A = (jnp.arange(X[0].shape[-1]), jnp.arange(X[1].shape[-1])[:self.split_loc])
+                idx_D = (jnp.arange(X[0].shape[-1]), jnp.arange(X[1].shape[-1])[self.split_loc:])
             else:
                 idx_A = (idx[0], idx[1][:self.split_loc])
                 idx_D = (idx[0], idx[1][self.split_loc:])

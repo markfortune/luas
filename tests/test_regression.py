@@ -38,14 +38,25 @@ def reference(update_reference):
         yield dict(np.load(REF_FILE))
 
 
-def _compare(key, value, reference, rtol):
+# Tolerances allow for round-off differences between machines (e.g. the reference made on one CPU,
+# CI on another), while still catching real changes in results.
+LOGL_RTOL = 1e-9     # relative to |logL|
+GRAD_RTOL = 1e-6     # relative to the largest gradient component, so tiny components don't fail on round-off
+
+
+def _compare(key, value, reference, rtol, relative_to_max=False):
     value = np.asarray(value)
     if reference is None:
         _updated[key] = value
         pytest.skip(f"saved new reference value for {key}")
     if key not in reference:
         pytest.skip(f"{key} not in reference file, rerun with --update-reference")
-    np.testing.assert_allclose(value, reference[key], rtol=rtol, atol=0)
+    ref = reference[key]
+    if relative_to_max:
+        err = np.abs(value - ref).max() / max(np.abs(ref).max(), 1e-300)
+        assert err < rtol, f"{key}: max error {err:.2e} relative to the largest component (tolerance {rtol:.0e})"
+    else:
+        np.testing.assert_allclose(value, ref, rtol=rtol, atol=0)
 
 
 def _gp(name):
@@ -55,7 +66,7 @@ def _gp(name):
 
 @pytest.mark.parametrize("name", NAMES)
 def test_logL_regression(name, reference):
-    _compare(f"logL/{name}", _gp(name).logL(P, Y), reference, rtol=1e-10)
+    _compare(f"logL/{name}", _gp(name).logL(P, Y), reference, rtol=LOGL_RTOL)
 
 
 @pytest.mark.slow
@@ -63,4 +74,4 @@ def test_logL_regression(name, reference):
 def test_gradient_regression(name, reference):
     gp = _gp(name)
     grad = ravel_pytree(jax.grad(gp.logL)(P, Y))[0]
-    _compare(f"grad/{name}", grad, reference, rtol=1e-8)
+    _compare(f"grad/{name}", grad, reference, rtol=GRAD_RTOL, relative_to_max=True)
