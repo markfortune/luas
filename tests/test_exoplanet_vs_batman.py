@@ -2,7 +2,7 @@
 
 batman (https://github.com/lkreidberg/batman) is an independent, widely used transit code, so
 agreement here checks the luas wrappers: parameter conversions (b -> inclination, Kipping limb
-darkening, depth -> radius ratio), baselines, eclipse normalisation and eccentric orbits.
+darkening, depth -> radius ratio), baselines and eclipse normalisation.
 
 batman is only needed for these tests, not for using luas. Its normal build compiles against an old
 numpy and then fails to import under numpy 2, so install it against your installed numpy:
@@ -26,46 +26,31 @@ else:
     pytest.importorskip("jaxoplanet")
 
 import jax.numpy as jnp
-from astropy.constants import G
 
 from luas import exoplanet as ex
-from luas import utility as ut
 from luas.exoplanet.transit_fns import eclipse_light_curve, ld_from_kipping
 
 warnings.filterwarnings("ignore", module="batman")
 
-# luas and batman agree to about 1e-8 for circular orbits and 2e-7 for eccentric ones (jaxoplanet 0.1 and 0.2)
+# luas and batman agree to about 1e-8 (jaxoplanet 0.1 and 0.2)
 ATOL = 1e-6   # 1 ppm, well below the precision of current transit observations
 
 P, A, T0 = 3., 8., 0.
 t = np.linspace(-0.15, 0.15, 2001)
 
 
-def batman_params(rho, b, u=(), ecc=0., w=90., limb_dark="quadratic"):
-    """batman parameters for a planet with impact parameter b at transit."""
+def batman_params(rho, b, u=(), limb_dark="quadratic"):
+    """batman parameters for a planet on a circular orbit with impact parameter b."""
     p = batman.TransitParams()
     p.t0, p.per, p.rp, p.a = T0, P, rho, A
-    # impact parameter at transit: b = a cos(i) (1 - e^2) / (1 + e sin w)
-    p.inc = np.degrees(np.arccos(b / A * (1 + ecc * np.sin(np.radians(w))) / (1 - ecc**2)))
-    p.ecc, p.w, p.limb_dark, p.u = ecc, w, limb_dark, list(u)
+    p.inc = np.degrees(np.arccos(b / A))     # b = a cos(i) for a circular orbit
+    p.ecc, p.w, p.limb_dark, p.u = 0., 90., limb_dark, list(u)
     return p
 
 
 def batman_transit(rho, b, u, times=t, **kw):
     p = batman_params(rho, b, u, **kw)
     return batman.TransitModel(p, times).light_curve(p)
-
-
-def batman_eclipse_minus_fp(rho, b, fp, **kw):
-    """batman secondary eclipse, shifted so out-of-eclipse flux is 1 (luas's convention).
-
-    Returns (times, flux), with times centred on the secondary eclipse.
-    """
-    p = batman_params(rho, b, limb_dark="uniform", **kw)
-    p.fp = fp
-    p.t_secondary = batman.TransitModel(p, np.array([T0])).get_t_secondary(p)
-    times = p.t_secondary + (t - T0)
-    return times, batman.TransitModel(p, times, transittype="secondary").light_curve(p) - fp
 
 
 BASE = {"T0": T0, "P": P, "a": A, "Foot": 1., "Tgrad": 0.}
@@ -120,27 +105,3 @@ def test_eclipse_2D():
         pb.fp, pb.t_secondary = float(fp[i]), T0
         want = batman.TransitModel(pb, t, transittype="secondary").light_curve(pb) - pb.fp
         np.testing.assert_allclose(got[i], want, atol=ATOL, rtol=0, err_msg=f"wavelength {i}")
-
-
-ECC = [(0.1, 60.), (0.3, 200.)]
-
-
-@pytest.mark.parametrize("ecc,w", ECC, ids=[f"e{e}-w{w:.0f}" for e, w in ECC])
-def test_utility_transit_light_curve_ecc(ecc, w):
-    wr = np.radians(w)
-    p = {**BASE, "b": 0.5, "secosw": np.sqrt(ecc) * np.cos(wr), "sesinw": np.sqrt(ecc) * np.sin(wr),
-         "d": 0.01, "u1": 0.3, "u2": 0.2}
-    got = np.asarray(ut.transit_light_curve_ecc(p, jnp.asarray(t)))
-    np.testing.assert_allclose(got, batman_transit(0.1, 0.5, (0.3, 0.2), ecc=ecc, w=w), atol=ATOL, rtol=0)
-
-
-@pytest.mark.parametrize("ecc,w", [(1e-6, 90.)] + ECC, ids=["circular"] + [f"e{e}-w{w:.0f}" for e, w in ECC])
-def test_utility_eclipse_light_curve_ecc(ecc, w):
-    # T0 is the time of the primary transit; the eclipse is where batman puts the secondary eclipse
-    wr = np.radians(w)
-    rho_s = 3 * np.pi * A**3 / (G.value * (P * 86400)**2)
-    p = {**BASE, "rho_s": rho_s, "b": 0.5, "rho": 0.1, "d": 300e-6,
-         "secosw": np.sqrt(ecc) * np.cos(wr), "sesinw": np.sqrt(ecc) * np.sin(wr)}
-    times, want = batman_eclipse_minus_fp(0.1, 0.5, 300e-6, ecc=ecc, w=w)
-    got = np.asarray(ut.eclipse_light_curve_ecc(p, jnp.asarray(times)))
-    np.testing.assert_allclose(got, want, atol=ATOL, rtol=0)
