@@ -126,6 +126,12 @@ class GP(object):
             self.dim = len(X)
         else:
             self.dim = 1
+
+        for d in range(self.dim):
+            if (self.dim == 1 and X.ndim != 1) or (self.dim > 1 and X[d].ndim != 1):
+                raise Exception(f"Currently input locations for dimension {d} must be a 1D array, got shape {X[d].shape}."\
+                                " In future this will be extended to allow multiple input variables as shape (d, N).")
+            
         self.data_shape = calc_data_shape(self.x)
         
         # Specify kernel function and include any args or kwargs needed

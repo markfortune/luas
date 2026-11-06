@@ -39,18 +39,11 @@ where = ["src"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+exoplanet = ["jaxoplanet>=0.1.0", "astropy"]
 docs = [
-    "numpy",
-    "matplotlib",
-    "tqdm",
-    "jax", 
-    "jaxlib",
-    "scipy",
-    "equinox",
-    "astropy",
+    "luas[exoplanet]",
     "sphinx-book-theme",
     "myst-nb",
-    "jaxoplanet",
     "numpyro",
     "pymc",
 ]

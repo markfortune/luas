@@ -1,16 +1,25 @@
+try:
+    import jaxoplanet
+    from astropy.constants import M_sun, R_sun, G
+    import astropy.units as u
+except ImportError as e:
+    raise ImportError(
+        "luas.exoplanet needs jaxoplanet and astropy. Install them yourself or with: pip install 'luas[exoplanet]'"
+    ) from e
+
 import jax
 import jax.numpy as jnp
-import jaxoplanet
 from typing import Tuple
 from ..luas_types import PyTree, JAXArray
-from astropy.constants import M_sun, R_sun, G
-import astropy.units as u
 
 __all__ = [
     "ld_to_kipping",
     "ld_from_kipping",
     "transit_light_curve",
     "transit_2D",
+    "transit_light_curve_no_ld",
+    "eclipse_light_curve",
+    "eclipse_2D",
 ]
 
 def ld_to_kipping(u1: JAXArray, u2: JAXArray) -> Tuple[JAXArray, JAXArray]:

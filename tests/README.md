@@ -9,6 +9,7 @@ the dense covariance matrix with plain numpy/JAX.
 | `test_covtype_decompositions.py` | logdet, sqrt/inverse sqrt, solves, logL, matmul and eigendecomposition of invertible 1D CovTypes |
 | `test_gp_logL.py` | 2D GP log likelihood for every optimisation: automatic choice, `GeneralKernel`, alternative kernels, `jit` and gradients |
 | `test_regression.py` | logL and gradients against saved values in `reference/` |
+| `test_exoplanet_vs_batman.py` | `luas.exoplanet` light curves against [batman](https://github.com/lkreidberg/batman), to 1 ppm. Skipped unless jaxoplanet and batman are installed (`pip install -e ".[exoplanet]"`, then `pip install --no-build-isolation batman-package`) |
 | `test_stress_2d.py` | Unusual but reasonable usage: input layouts, parameter extremes, alternative kernel constructions, jit/vmap/grad patterns (`slow` and `stress`) |
 
 Shared kernels and data live in `kernel_cases.py` (following
