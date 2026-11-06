@@ -266,6 +266,7 @@ class LuasKernel(CovType):
         self,
         X: tuple,
         stored_values: Optional[PyTree] = {},
+        **kwargs,
     ) -> PyTree:
         r"""Required calculations for the decomposition of the overall matrix ``K`` where the previously
         stored decomposition of ``K`` cannot be used for the calculation of a new decomposition.
@@ -346,6 +347,7 @@ class LuasKernel(CovType):
         stored_values: Optional[PyTree] = {},
         rtol: Optional[Scalar] = 1e-12,
         atol: Optional[Scalar] = 1e-12,
+        **kwargs,
     ) -> PyTree:
         r"""Required calculations for the decomposition of the overall matrix ``K`` where the previously
         stored decomposition of ``K`` may be used for the calculation of a new decomposition.
