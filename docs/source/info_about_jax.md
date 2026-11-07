@@ -6,7 +6,7 @@
 
 However, `jax` can be a bit challenging to work with without some initial context. ["How to Think in JAX"](https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html) and ["JAX - The Sharp Bits"](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html) are excellent places to learn the specifics of programming in `jax`. However, if your needs with `luas` are not too complex then perhaps going to the [`tutorials`](tutorials) section will be sufficient to get up and running. A quick summary of issues you may first encounter with `jax` is included below.
 
-## A Brief Summary of Common Issues with JAX
+## A brief summary of common issues with JAX
 
 `jax` is designed for pure functional programming and so functions shouldn't have side-effects i.e. don't modify global variables within functions. For example, classes such as [`GP`](api-gp) and [`LuasKernel`](api-luaskernel) have a few attributes which are never modified by any of their methods. You should also never modify these attributes but instead should initialise a new object if changing them.
 

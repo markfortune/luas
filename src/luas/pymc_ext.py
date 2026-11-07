@@ -1,11 +1,16 @@
 import numpy as np
 import jax
 from jax.flatten_util import ravel_pytree
-from .jax_convenience_fns import order_dict
+from .convenience_fns import order_dict
 import pymc as pm
 from copy import deepcopy
 
-pymc_version = int(pm.__version__[0])
+try:
+    pymc_version = int(str(pm.__version__).split(".")[0])
+except ValueError:
+    # pm.__version__ is not a normal version string. This happens when Sphinx
+    # builds the docs with PyMC replaced by a placeholder module, so assume v5.
+    pymc_version = 5
 
 if pymc_version == 4:
     # PyMC v4 uses aesara as a backend
@@ -27,8 +32,16 @@ __all__ = [
     "LuasPyMCWrapper",
 ]
 
+def _flatten(val):
+    """Flattens a parameter (PyMC tensor, or a fixed float/NumPy/JAX array of any shape) into a 1D tensor
+    in row-major order, matching how ``jax.flatten_util.ravel_pytree`` flattens each leaf of a PyTree."""
+    if not isinstance(val, TensorVariable):
+        val = tens.as_tensor_variable(np.asarray(val))
+    return val.ravel()
+
+
 def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, jit = True):
-    """PyMC extension which can by used with a luas.GPClass.GP object for log-likelihood calculations.
+    """PyMC extension which can by used with a luas.GP object for log-likelihood calculations.
     
     Args:
         name (str): Name of observable storing likelihood values e.g. "log_like".
@@ -54,10 +67,11 @@ def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, j
     dict_to_build = deepcopy(var_dict)
     
     # Loop through each parameter and if it's a TensorVariable (i.e. a parameter being sampled by PyMC)
-    # replace it with a NumPy array of the same size
+    # replace it with a NumPy array of the same shape. This can be any shape (a scalar, 1D or 2D array etc.)
     for par in var_dict.keys():
-        if type(var_dict[par]) == TensorVariable:
-            dict_to_build[par] = np.zeros(var_dict[par].shape.eval()[0])
+        if isinstance(var_dict[par], TensorVariable):
+            tensor_shape = tuple(s for s in var_dict[par].shape.eval())
+            dict_to_build[par] = np.zeros(tensor_shape)
 
     # Now that we have a PyTree with the right dimensions as the input variables
     # we can use jax's ravel_pytree function to create a function which will convert
@@ -82,11 +96,27 @@ def LuasPyMC(name, gp = None, var_dict = None, Y = None, likelihood_fn = None, j
     # Need to sort the variables in the correct order for make_p_dict to construct the right PyTree
     par_keys_ordered, par_values_ordered = order_dict(var_dict)
     
-    # Makes the array of parameter inputs PyMC will sample
-    p_pymc = pm.math.concatenate(par_values_ordered)
+    # Makes the array of parameter inputs PyMC will sample. Each parameter is flattened (in the same
+    # row-major order as ravel_pytree) so parameters can be scalars, 1D arrays, 2D arrays etc.
+    p_pymc = tens.concatenate([_flatten(val) for val in par_values_ordered])
     
     # Returns the log likelihood using the custom potential provided by PyMC
     return pm.Potential(name, logP_pymc(p_pymc))
+
+
+def build_pymc_model(gp, p_vary, Y, ordered_param_list, p_fixed = {}, param_bounds = {}):
+    with pm.Model() as model:
+        var_dict = deepcopy(p_fixed)
+
+        for par in ordered_param_list:
+            if par in param_bounds.keys():
+                var_dict[par] = pm.Uniform(par, lower=param_bounds[par][0], upper=param_bounds[par][1], shape=p_vary[par].shape)
+            else:
+                var_dict[par] = pm.Flat(par, shape=p_vary[par].shape)
+        LuasPyMC("log_like", gp = gp, var_dict = var_dict, Y = Y)
+        
+    return model, var_dict
+
 
     
 class LuasPyMCWrapper(Op):
@@ -132,3 +162,4 @@ class LuasPyMCWrapper(Op):
         grad_result = value.owner.outputs[1]
 
         return [output_gradients[0] * grad_result]
+    

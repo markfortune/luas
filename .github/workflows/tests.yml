@@ -1,0 +1,90 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  LUAS_REQUIRE_EXOPLANET_TESTS: "1"   # fail, rather than skip, if batman or jaxoplanet is missing
+
+jobs:
+  # Main tests on the recommended jax version. Blocks the PR if anything fails.
+  test:
+    name: Main (jax 0.10.1) · ${{ matrix.os == 'macos-latest' && 'macOS' || 'Linux' }} · Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]   # macos-latest runs on Apple Silicon
+        # Oldest supported (tinygp needs 3.11) and newest with jax wheels; 3.15 once jax supports it
+        python-version: ["3.11", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "jax==0.10.1" "jaxlib==0.10.1"
+          # Latest tinygp from GitHub (the PyPI release is missing fixes luas needs)
+          pip install "git+https://github.com/dfm/tinygp.git"
+          pip install -e ".[test,exoplanet]"
+          # batman is only used to cross-check luas.exoplanet; build it against the installed numpy
+          pip install setuptools wheel
+          pip install --no-build-isolation batman-package
+
+      - name: Fast tests
+        run: pytest -m "not slow"
+
+      - name: Slow tests (gradients and stress tests)
+        run: pytest -m slow
+
+  # Early warning for upcoming jax changes. Allowed to fail without blocking the PR.
+  latest-jax:
+    name: Latest jax (optional) · Linux · Python 3.14
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade jax
+          pip install "git+https://github.com/dfm/tinygp.git"
+          pip install -e ".[test,exoplanet]"
+          # batman is only used to cross-check luas.exoplanet; build it against the installed numpy
+          pip install setuptools wheel
+          pip install --no-build-isolation batman-package
+      - name: Tests
+        run: pytest -m "not stress"
+
+  # The minimum versions stated in pyproject.toml (Python 3.11, jax 0.4.38, numpy 1.24, scipy 1.10, jaxoplanet 0.1.0).
+  # Blocks the PR, so a change that needs newer versions has to raise the minimums too.
+  minimum-versions:
+    name: Minimum versions (jax 0.4.38, numpy 1.24, scipy 1.10, jaxoplanet 0.1.0) · Linux · Python 3.11
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # All pins in one command so pip keeps them when resolving matplotlib, equinox, etc.
+          pip install "jax==0.4.38" "jaxlib==0.4.38" "numpy==1.24.4" "scipy==1.10.1" "jaxoplanet==0.1.0" \
+                      "git+https://github.com/dfm/tinygp.git" -e ".[test,exoplanet]"
+          # batman is only used to cross-check luas.exoplanet; build it against the installed numpy
+          pip install setuptools wheel
+          pip install --no-build-isolation batman-package
+      - name: Tests
+        run: pytest -m "not stress"

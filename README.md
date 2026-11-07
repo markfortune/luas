@@ -1,4 +1,6 @@
 # luas
+NOTE: This is a new update to the luas repository which is currently still in development! The new interface is not yet stable and more testing needs to be performed, so expect some changes until the new update to the original luas repo!
+
 A library designed for implementing fast and flexible 2D Gaussian processes. It has been written in ``jax`` and can be easily used in combination with inference libraries such as ``PyMC`` and ``NumPyro``. Documentation and tutorials are located at https://luas.readthedocs.io/en/latest/.
 
 See [Fortune et al. (2024)](https://ui.adsabs.harvard.edu/abs/2024A%26A...686A..89F/abstract) which explains the main optimisation included in `luas` and outlines the use of this package to analyse transmission spectroscopy observations.
