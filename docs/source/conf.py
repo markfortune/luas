@@ -12,9 +12,9 @@ sys.path.insert(0, os.path.abspath('../../src'))
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'luas'
-copyright = '2023, Mark Fortune'
+copyright = '2026, Mark Fortune'
 author = 'Mark Fortune'
-release = '0.0.2'
+release = '0.1.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -33,9 +33,7 @@ autodoc_mock_imports = [
     'numpyro',
     'pymc',
     'pytensor',
-    'aesara',
     'jaxoplanet',
-    'ldtk',
     'corner',
 ]
 

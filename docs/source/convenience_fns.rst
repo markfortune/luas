@@ -12,6 +12,7 @@ convenience_fns
    pytree_to_array_2D
    varying_params_wrapper
    large_hessian_calc
+   diagnose_bad_laplace
    get_corr_mat
    check_params_in_bounds
    order_list

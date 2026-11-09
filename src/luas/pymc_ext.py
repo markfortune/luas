@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import jax
 from jax.flatten_util import ravel_pytree
@@ -5,32 +7,59 @@ from .convenience_fns import order_dict
 import pymc as pm
 from copy import deepcopy
 
+# pymc is very frustrating and constantly changes with a load of deprecation warnings
+# therefore there's a load of checks I've to do just to support versions 5 and 6...
 try:
     pymc_version = int(str(pm.__version__).split(".")[0])
 except ValueError:
     # pm.__version__ is not a normal version string. This happens when Sphinx
     # builds the docs with PyMC replaced by a placeholder module, so assume v5.
-    pymc_version = 5
+    pymc_version = 6
 
-if pymc_version == 4:
-    # PyMC v4 uses aesara as a backend
-    import aesara.tensor as tens
-    from aesara.tensor.var import TensorVariable
-    from aesara.graph import Apply, Op
-    
-elif pymc_version == 5:
-    # PyMC v5 uses pytensor as a backend
-    import pytensor.tensor as tens
-    from pytensor.tensor.var import TensorVariable
-    from pytensor.graph import Apply, Op
-    
+if pymc_version < 6:
+    raise Exception(f"PyMC Version {pymc_version} not currently supported. Supported versions are >=6.")
 else:
-    raise Exception(f"PyMC Version {pymc_version} not currently supported. Supported versions are version 4 and version 5.")
+    # this apparently only costs about 10 us per gradient call but allows PyMC to work in pure Python which is good for installing easily
+    # anyway the warning doesn't need to be printed everytime a model is built
+    warnings.filterwarnings("ignore", message="Numba will use object mode to run LuasPyMCWrapper", category=UserWarning)
+
+# PyMC uses pytensor as a backend
+import pytensor.tensor as tens
+from pytensor.graph import Apply, Op
+from pytensor.tensor.variable import TensorVariable
+
+import inspect
 
 __all__ = [
     "LuasPyMC",
     "LuasPyMCWrapper",
 ]
+
+def find_MAP(*args, method='L-BFGS-B', start = None, maxeval = 5000, include_transformed = False, **kwargs):
+    """Wrapper for ``pymc.find_MAP`` which suppresses the deprecation warning in PyMC v6."""
+
+    new_find_MAP_params = "initvals" in inspect.signature(pm.find_MAP).parameters  # True only on PyMC >= 6.4
+    
+    if new_find_MAP_params:
+        # stupid renaming of variables for new pymc versions
+        map_idata = pm.find_MAP(*args, method = method, initvals=start, maxiter = maxeval, jitter = False, return_inferencedata=True,
+                                idata_kwargs = {"include_transformed":include_transformed}, **kwargs)
+        # Have to handle an inference object from an optimisation because pymc devs are annoying
+        # The MAP point is stored as a single chain with a single draw
+        posterior = map_idata["posterior"]
+        map_estimate = {}
+        for name, val in posterior.data_vars.items():
+            val = np.asarray(val.values[0, 0])
+            if name in start:
+                val = val.reshape(np.shape(start[name]))
+            map_estimate[name] = val
+    else:
+        # beautiful older interface
+        map_estimate = pm.find_MAP(*args, method = method, start=start, maxeval = maxeval, jitter = False,
+                                include_transformed = include_transformed, **kwargs)
+
+    
+    return map_estimate
 
 def _flatten(val):
     """Flattens a parameter (PyMC tensor, or a fixed float/NumPy/JAX array of any shape) into a 1D tensor
@@ -120,8 +149,8 @@ def build_pymc_model(gp, p_vary, Y, ordered_param_list, p_fixed = {}, param_boun
 
     
 class LuasPyMCWrapper(Op):
-    """Wrapper for log-likelihood calculations used by ``LuasGP`` which depending on the version of ``PyMC`` 
-    uses either ``Aesara`` or ``PyTensor``. Taken from the ``PyMC`` tutorial 'How to wrap a JAX function for use in PyMC'
+    """Wrapper for log-likelihood calculations for luas to work with ``PyMC``.
+    Taken from an old ``PyMC`` tutorial 'How to wrap a JAX function for use in PyMC'
     (https://www.pymc.io/projects/examples/en/latest/howto/wrapping_jax_function.html).
     
     """
@@ -152,14 +181,11 @@ class LuasPyMCWrapper(Op):
         outputs[0][0] = np.asarray(result, dtype=node.outputs[0].dtype)
         outputs[1][0] = np.asarray(grad_result, dtype=node.outputs[1].dtype)
 
-    def grad(self, inputs, output_gradients):
-        
-        # The `Op` computes its own gradients, so we call it again.
-        value = self(*inputs)
-        
-        # We hid the gradient outputs by setting `default_update=0`, but we
-        # can retrieve them anytime by accessing the `Apply` node via `value.owner`
-        grad_result = value.owner.outputs[1]
+    def pullback(self, inputs, outputs, cotangents):
+        # PyTensor >= 3 (PyMC v6)
+        return [cotangents[0] * outputs[1]]
 
-        return [output_gradients[0] * grad_result]
+    def L_op(self, inputs, outputs, output_gradients):
+        # PyTensor < 3 (PyMC v5)
+        return self.pullback(inputs, outputs, output_gradients)
     

@@ -4,7 +4,7 @@ try:
     import astropy.units as u
 except ImportError as e:
     raise ImportError(
-        "luas.exoplanet needs jaxoplanet and astropy. Install them yourself or with: pip install 'luas[exoplanet]'"
+        "luas.exoplanet needs jaxoplanet and astropy. Install them yourself or with: pip install 'luas-gp[exoplanet]'"
     ) from e
 
 import jax

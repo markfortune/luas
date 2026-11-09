@@ -24,6 +24,7 @@ __all__ = [
     "interp_params",
     "stack_params",
     "stack_obs_and_pred_points",
+    "diagnose_bad_laplace",
 ]
 
 def get_corr_mat(cov_mat: JAXArray, zero_diag: Optional[bool] = False) -> JAXArray:
@@ -328,11 +329,12 @@ def varying_params_wrapper(
     return p_vary, make_p
     
 
+
 def large_hessian_calc(
     fn: Callable,
     p: PyTree,
     *args,
-    block_size: Optional[int] = 50,
+    block_size: Optional[int] = 20,
     return_array: Optional[bool] = True,
     jit: Optional[bool] = True,
     **kwargs,
@@ -353,7 +355,7 @@ def large_hessian_calc(
         *args: Extra positional arguments passed to ``fn``.
         block_size (int, optional): The number of rows of the hessian to calculate at once.
             Large numbers will have a higher memory cost but may result in a shorter runtime.
-            Defaults to 50.
+            Defaults to 20.
         return_array (bool, optional): Whether to return the hessian as an array of shape ``(N_{par}, N_{par})``
             for ``N_{par}`` total parameters in ``p`` or as a nested PyTree where the hessian values for parameters
             named par1 and par2 would be given by ``hessian_pytree[par1][par2]`` and ``hessian_pytree[par2][par1]``.
@@ -375,35 +377,134 @@ def large_hessian_calc(
     fn_arr_wrapper = lambda p_arr: fn(make_p_dict(p_arr), *args, **kwargs)
     
     # We then create a function which returns the gradient of specific array elements
-    grad_wrapper = lambda p_arr, i: jax.grad(fn_arr_wrapper)(p_arr)[i]
+    grad_fn = jax.grad(fn_arr_wrapper)
+
+    # treat reverse-mode gradients of fn as a vector
+    # any particular gradient at element i is equal to this grad(fn) \cdot e_i
+    # we then get the forward-mode derivative of this function to get the rows of the hessian
+    # this forward-over-reverse mode hessian calc is how JAX does it (avoids issue with stable_eigh where reverse over reverse is wrong)
+
+    # using jax.linearize instead of jax.jvp is an optimisation suggested by Claude
+    # it differs from jax.jvp in that it pre-computes anything needed for the forward-mode derivative
+    # i.e. it avoids calculating the same eigendecomposition at p_arr for every block
+    # we only need its second output which tells us how to multiply vectors times the hessian matrix (without approximation)
+    def linearise(p_arr):
+        _, hess_vec_prod = jax.linearize(grad_fn, p_arr)
+        return hess_vec_prod
     
-    # Finally we create a function which takes the derivative of a group of first derivatives
-    # vmap allows us to take this gradient wrt an array of gradients as jax.grad only works
-    # on functions which return scalars
-    hessian_wrapper = jax.vmap(jax.grad(grad_wrapper), in_axes = (None, 0))
+    # This computes rows of the hessian, given a function which defines the hessian multiplied by vectors and multiplying it by basis vectors
+    hessian_rows = lambda hvp, basis_vecs: jax.vmap(hvp)(basis_vecs)
     
     if jit:
-        hessian_wrapper = jax.jit(hessian_wrapper)
+        linearise = jax.jit(linearise)
+        hessian_rows = jax.jit(hessian_rows)
+
+    # Computes function needed to multiply hessian by vectors once
+    # This is where all the eigendecompositions, etc. are actually calculated
+    # hessian_rows will then be able to then make use of this decomposition for all row calculations
+    hvp = linearise(p_arr)
     
     N_par = p_arr.size
-    hess_arr = jnp.zeros((N_par, N_par))
+    block_size = min(block_size, N_par) # Make sure block size is not bigger than N_par!
+    hess_arr = jnp.zeros((N_par + (-N_par % block_size), N_par))
+    basis = jnp.eye(N_par)
+
+    # pad basis vecs with zero rows on bottom to avoid recompiling twice with some awkward shape
+    basis = jnp.concatenate([basis, jnp.zeros((-N_par % block_size, N_par))], axis = 0)
     
-    # Iterates through blocks of rows solving second derivatives
+    # Iterates through blocks of rows solving second derivatives by multiplying hessian with basis vectors
+    # Adds extra zero rows on the last calculation to avoid a second recompile if N_par is not divisible by N_block
     for i in tqdm(range(0, N_par, block_size)):
         rows = jnp.arange(i, i+block_size)
-        hess_arr = hess_arr.at[rows, :].set(hessian_wrapper(p_arr, rows))
+        hess_arr = hess_arr.at[rows, :].set(hessian_rows(hvp, basis[rows, :]))
 
-    # If the size of the array is not an even multiple of block_size will calculate the remaining rows
-    if N_par % block_size > 0:
-        rows = jnp.arange(i+block_size, N_par)
-        hess_arr = hess_arr.at[rows, :].set(hessian_wrapper(p_arr, rows))
-    
+    # Remove any potential padded zero-rows
+    hess_arr = hess_arr[:N_par, :]
+
     # Defaults to returning a JAXArray of parameters but can return a nested PyTree
     if return_array:
         return hess_arr
     else:
         return array_to_pytree_2D(p, hess_arr)
 
+
+def diagnose_bad_laplace(
+    precision_mat: JAXArray,
+    p_vary: PyTree,
+    n_top: Optional[int] = 3,
+) -> str:
+    """Describes which parameters make a precision matrix fail to be positive definite.
+
+    Intended to be called after a Cholesky factorisation of the precision matrix has failed (e.g. in
+    :meth:`luas.GP.laplace_approx`), to give a helpful error message. The precision matrix is
+    first rescaled to have a unit diagonal so that parameters with different units can be compared.
+    Any eigenvalues of the rescaled matrix which are too small to be resolved by a Cholesky
+    factorisation are flagged, and the parameters contributing most to each corresponding eigenvector
+    are listed. If no eigenvalue is below the tolerance, the smallest eigenvalue is reported instead.
+
+    Args:
+        precision_mat (JAXArray): The precision matrix (negative Hessian of the log posterior), ordered
+            as ``jax.flatten_util.ravel_pytree`` orders ``p_vary``.
+        p_vary (PyTree): The parameters being varied, used to label each row of ``precision_mat``.
+        n_top (int, optional): The number of parameters to list for each problematic direction.
+            Defaults to 3.
+
+    Returns:
+        str: A message describing parameters with non-positive curvature and the near-singular
+        directions of the precision matrix.
+
+    """
+
+    # Label each row of the precision matrix, e.g. "T0" for a scalar or "rp[2, 5]" for an
+    # array parameter, in the same order ravel_pytree flattens p_vary
+    labels = []
+    for par in order_list(list(p_vary.keys())):
+        shape = jnp.shape(p_vary[par])
+        if len(shape) == 0:
+            labels.append(par)
+        else:
+            for idx in np.ndindex(shape):
+                labels.append(f"{par}[{', '.join(str(n) for n in idx)}]")
+
+    lines = []
+
+    # Parameters with zero or negative curvature on their own can be named directly
+    diag = jnp.diag(precision_mat)
+    for j in jnp.where(diag <= 0.)[0]:
+        lines.append(f"  {labels[j]} has non-positive curvature ({diag[j]:.2e}) on its own.")
+
+    # Rescale to a unit diagonal (like converting a covariance to a correlation matrix) so that the
+    # eigenvectors can be compared across parameters with different units. Rows with zero curvature
+    # are left unscaled to avoid dividing by zero.
+    abs_diag = jnp.abs(diag)
+    d = 1. / jnp.sqrt(jnp.where(abs_diag > 0., abs_diag, 1.))
+    scaled_mat = precision_mat * d[:, None] * d[None, :]
+
+    eigvals, eigvecs = jnp.linalg.eigh(scaled_mat)
+
+    # Eigenvalues below roughly n * machine epsilon * the largest eigenvalue can't be resolved by a
+    # Cholesky factorisation, so even their sign is unreliable. A factor of 10 gives some margin.
+    n = eigvals.size
+    tol = 10. * n * jnp.finfo(eigvals.dtype).eps * jnp.max(jnp.abs(eigvals))
+    bad_inds = jnp.where(eigvals <= tol)[0]
+
+    # If nothing is below the tolerance, still report the direction with the smallest eigenvalue
+    if bad_inds.size == 0:
+        bad_inds = jnp.array([jnp.argmin(eigvals)])
+        description = "Smallest-eigenvalue direction"
+    else:
+        description = "Near-singular direction"
+
+    for i in bad_inds:
+        eigvec = eigvecs[:, i]
+
+        # List the largest components, skipping any too small to matter
+        top_inds = jnp.argsort(-jnp.abs(eigvec))[:n_top]
+        components = ", ".join(f"{eigvec[j]:+.2f} {labels[j]}" for j in top_inds
+                               if jnp.abs(eigvec[j]) >= 0.01)
+        lines.append(f"  {description} (scaled eigenvalue {eigvals[i]:.2e}): {components}")
+
+    return "\n".join(lines)
 
 def sigmoid(x):
     """A sigmoid function. When dealing with parameters bounded between limits [a, b], PyMC and NumPyro
@@ -804,4 +905,131 @@ def stack_obs_and_pred_points(x, x_pred, sort = None):
         sort_fn = None
 
     return x_total, x_pred, obs_points, pred_points, sort_fn
+
+
+def make_video(
+        *data_cubes,
+        time_axis=2,
+        X=None,
+        titles=None,
+        axes_labels=[r"$x_0$", r"$x_1$", r"$x_2$"],
+        start=0,
+        stop=None,
+        step=1,
+        output="html",
+        filename="",
+        figsize=(20, 5),
+        dpi=75,
+        interval=50,
+        sharey=True,
+        tick_fontsize = 13,
+        cbar_fontsize = 10,
+        label_fontsize = 14,
+        **fig_kwargs,
+    ):
+    r"""Animates one or more 3D data cubes side by side along ``time_axis``.
+
+    Each frame matches the 2D panels of ``GP.plot``: one ``pcolormesh`` per cube, with a
+    titled colorbar on top. Colour limits are fixed per cube across all frames.
+
+    Args:
+        *data_cubes: 3D arrays, one per panel, all with the same shape.
+        time_axis (int): Axis of each cube to animate over. Defaults to 2. The remaining
+            two axes, in their original order, are plotted as (x_1, x_2).
+        x_plot (tuple, optional): (x_1, x_2) coordinates for the panel axes. Defaults to pixel indices.
+        titles (list of str, optional): Colorbar title for each panel.
+        output (str): ``"html"`` (interactive player) or ``"gif"``.
+        filename (str, optional): If given, also saves to this file (.gif or .html, matching ``output``).
+
+    Returns:
+        IPython.display.HTML or IPython.display.Image
+    """
+    # Bunch of lazy imports, only imported if needed
+    import os
+    import tempfile
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+    from IPython.display import Image, HTML
+
+    if output not in ("html", "gif"):
+        raise ValueError("output must be 'html' or 'gif'")
+
+    # Move the time axis to the front: each cube becomes (N_frames, N_1, N_2)
+    data_cubes = [np.moveaxis(np.asarray(c), time_axis, 0) for c in data_cubes]
+
+    n_plots = len(data_cubes)
+    if stop is None:
+        stop = data_cubes[0].shape[0]
+    frames = range(start, stop, step)
+
+    if titles is None:
+        titles = [""] * n_plots
+    if X is None:
+        _, n1, n2 = data_cubes[0].shape
+        x_plot = (np.arange(n1), np.arange(n2))
+    else:
+        time = X[time_axis]
+        x_plot = []
+        x_labels = []
+        for i in range(3):
+            if i != time_axis:
+                x_plot.append(X[i])
+                x_labels.append(axes_labels[i])
     
+    time_label = axes_labels[time_axis]
+
+    fig = plt.figure(figsize=figsize, dpi=dpi, **fig_kwargs)
+    ax = fig.subplots(1, n_plots, sharey=sharey, squeeze=False)[0]
+
+    meshes = []
+    for i, (cube, title) in enumerate(zip(data_cubes, titles)):
+        vmin, vmax = cube[start:stop].min(), cube[start:stop].max()
+        mesh = ax[i].pcolormesh(x_plot[1], x_plot[0], cube[start],
+                                shading="nearest", vmin=vmin, vmax=vmax)
+        meshes.append(mesh)
+
+        cbar = fig.colorbar(mesh, ax=ax[i], location="top", pad=0.03,
+                            fraction=0.04, aspect=40)
+        cbar.ax.set_title(title, pad=4, fontsize=label_fontsize)
+        cbar.ax.tick_params(labelsize=cbar_fontsize)   # colorbar ticks
+        ax[i].tick_params(labelsize=tick_fontsize)
+
+        ax[i].set_xlabel(x_labels[1], fontsize=label_fontsize)
+        ax[i].yaxis.set_inverted(True)  # idempotent, so safe with sharey
+    ax[0].set_ylabel(x_labels[0], fontsize=label_fontsize)
+
+    # Create the suptitle before tight_layout so space is reserved for it
+    def frame_text(j):
+        return f"{time_label} = {time[j]:.4g}" if time is not None else f"Frame {j}"
+    suptitle = fig.suptitle(frame_text(start), fontsize=label_fontsize)
+    fig.tight_layout()
+
+    def update(j):
+        for mesh, cube in zip(meshes, data_cubes):
+            mesh.set_array(cube[j].ravel())
+        suptitle.set_text(frame_text(j))
+        return meshes + [suptitle]
+
+    ani = animation.FuncAnimation(fig, update, frames=frames, interval=interval)
+
+    if output == "html":
+        html = ani.to_jshtml()
+        if filename:
+            with open(filename, "w") as f:
+                f.write(html)
+        plt.close(fig)
+        return HTML(html)
+
+    # GIF
+    def _save_and_load(path):
+        ani.save(path, writer="pillow")
+        with open(path, "rb") as f:
+            return f.read()
+
+    if filename:
+        gif_bytes = _save_and_load(filename)
+    else:
+        with tempfile.TemporaryDirectory() as d:
+            gif_bytes = _save_and_load(os.path.join(d, "anim.gif"))
+    plt.close(fig)
+    return Image(data=gif_bytes, format="gif")

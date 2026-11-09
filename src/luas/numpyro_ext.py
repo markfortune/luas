@@ -1,13 +1,32 @@
+import numpyro
 import numpyro.distributions as dist
-from numpyro.distributions.util import promote_shapes, validate_sample
-from jax import lax
+from copy import deepcopy
+import jax.numpy as jnp
 
 __all__ = [
     "LuasNumPyro",
 ]
 
+
+def build_numpyro_model(gp, p_vary, Y, ordered_param_list, p_fixed = {}, param_bounds = {}):
+
+    def model(Y):
+        # Makes of copy of any parameters to be kept fixed during sampling
+        var_dict = deepcopy(p_fixed)
+
+        for par in ordered_param_list:
+            if par in param_bounds.keys():
+                var_dict[par] = numpyro.sample(par, dist.Uniform(low = param_bounds[par][0], high = param_bounds[par][1]))
+            else:
+                var_dict[par] = numpyro.sample(par, dist.ImproperUniform(dist.constraints.real, (), event_shape = jnp.shape(p_vary[par])))
+        
+        numpyro.sample("log_like", LuasNumPyro(gp = gp, var_dict = var_dict), obs = Y)
+
+    return model
+
+
 class LuasNumPyro(dist.Distribution):
-    """Custom ``NumPyro`` distribution which allows a ``luas.GPClass.GP`` object to be used with
+    """Custom ``NumPyro`` distribution which allows a ``luas.GP`` object to be used with
     ``NumPyro``.
     
     Args:
@@ -41,7 +60,7 @@ class LuasNumPyro(dist.Distribution):
         
         super().__init__(
             batch_shape = (),
-            event_shape = (self.gp.N_l, self.gp.N_t),
+            event_shape = tuple(self.gp.data_shape),
             validate_args=validate_args,
         )
 
@@ -50,7 +69,7 @@ class LuasNumPyro(dist.Distribution):
         
         return self.logP_fn(self.p, Y)
     
-    
-    def support(self, Y):
-        
-        return dist.constraints.real(Y)
+    @property
+    def support(self):
+        # The data are real valued, and the whole (N_l, N_t) array is one event
+        return dist.constraints.independent(dist.constraints.real, len(self.event_shape))
