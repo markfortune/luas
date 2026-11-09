@@ -1,11 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "luas"
+name = "luas-gp"
 version = "0.1.0"
 description = "A library for implementing efficient 2D Gaussian processes"
 authors = [{ name = "Mark Fortune", email = "markfortuneis@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12"   # PyMC version 6 requires 3.12
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 # Minimum versions tested with full pytest run (Python 3.12, jax 0.4.38, numpy 1.26.4, scipy 1.11.4).
 # Install tinygp from GitHub: the PyPI release is missing fixes luas needs.
 dependencies = [
@@ -21,7 +26,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -30,8 +34,15 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
+[project.urls]
+Documentation = "https://luas.readthedocs.io"
+Source = "https://github.com/markfortune/luas"
+Issues = "https://github.com/markfortune/luas/issues"
+Paper = "https://arxiv.org/abs/2611.09198"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["luas.redux*", "luas.kernels.experimental"]
 
 [tool.setuptools.package-data]
 "luas.kernels" = ["data/*"]
@@ -40,7 +51,7 @@ where = ["src"]
 test = ["pytest", "jaxoplanet>=0.1.0", "astropy"]
 exoplanet = ["jaxoplanet>=0.1.0", "astropy", "pymc>=6", "corner>=2.3", "numpyro"]
 docs = [
-    "luas[exoplanet]",
+    "luas-gp[exoplanet]",
     "sphinx-book-theme",
     "myst-nb",
     "numpyro",

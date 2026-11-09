@@ -9,17 +9,13 @@ pip install git+https://github.com/dfm/tinygp.git
 ```
 Once you have tinygp installed, you can decide whether you want to install luas along with jaxoplanet, PyMC and NumPyro, which I recommend if using luas for exoplanet research. In this case you can run:
 ```bash
-git clone --depth 1 https://github.com/markfortune/luas.git
-cd luas
-python -m pip install -e .[exoplanet]
+pip install luas-gp[exoplanet]
 ```
 However, if you just want luas for your own inference setup and don't need jaxoplanet, then you can just run:
 ```bash
-git clone --depth 1 https://github.com/markfortune/luas.git
-cd luas
-python -m pip install -e .
+pip install luas-gp
 ```
-If running Jupyter/IPython notebooks then you will also want to make sure both ipykernel and ipywidgets (for PyMC progress bars) are installed, both of which can be installed using pip. If progress bars are not appearing properly when running gp.optimise/MCMC sampling with PyMC it can be that it loads too slow on the first run, and runs correctly afterwards. Some of the tutorial notebooks pre-load it to avoid that. 
+If running Jupyter/IPython notebooks then you will also want to make sure both ipykernel and ipywidgets (for PyMC progress bars) are installed, both of which can be installed using pip. If progress bars are not appearing properly when running gp.optimise/MCMC sampling with PyMC it can be that it loads too slow on the first run, and runs correctly afterwards. Some of the tutorial notebooks pre-load it to avoid that.
 
 ## Installing on GPU
 
