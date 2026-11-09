@@ -1,7 +1,7 @@
 (installation)=
 # Installation
 
-Currently supported Python versions are 3.11 - 3.14. From my testing, I've found jax 0.10.1 to run particularly quickly for some tinygp functionality, so you may want to start out by running ``pip install jax==0.10.1``. That said, testing has shown it works with jax >= 0.4.38 and the latest versions of jax are automatically tested on every pull request.
+Currently supported Python versions are 3.12 - 3.14. From my testing, I've found jax 0.10.1 to run particularly quickly for some tinygp functionality, so you may want to start out by running ``pip install jax==0.10.1``. That said, testing has shown it works with jax >= 0.4.38 and the latest versions of jax are automatically tested on every pull request.
 
 For installing tinygp, you currently need to install the latest version from its GitHub repo , as the latest named release is quite out of date and will break on some luas functions + lacks some new speedups which provide a performance boost (particularly on GPU). You can do this as follows:
 ```bash

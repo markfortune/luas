@@ -6,12 +6,12 @@ authors = [{ name = "Mark Fortune", email = "markfortuneis@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12"   # PyMC version 6 requires 3.12
 license = { text = "MIT" }
-# Minimum versions tested with full pytest run (Python 3.12, jax 0.4.38, numpy 1.24, scipy 1.10).
+# Minimum versions tested with full pytest run (Python 3.12, jax 0.4.38, numpy 1.26.4, scipy 1.11.4).
 # Install tinygp from GitHub: the PyPI release is missing fixes luas needs.
 dependencies = [
     "jax>=0.4.38",
-    "numpy>=1.24",
-    "scipy>=1.10",
+    "numpy>=1.26.4",
+    "scipy>=1.11.4",
     "tinygp>=0.3.1",
     "equinox",
     "matplotlib",
@@ -37,7 +37,7 @@ where = ["src"]
 "luas.kernels" = ["data/*"]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "jaxoplanet>=0.1.0", "astropy"]
 exoplanet = ["jaxoplanet>=0.1.0", "astropy", "pymc>=6", "corner>=2.3", "numpyro"]
 docs = [
     "luas[exoplanet]",
