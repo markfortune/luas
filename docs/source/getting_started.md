@@ -12,5 +12,4 @@ why_use_luas
 luas_for_exoplanets
 installation_info
 info_about_jax
-benchmarking
 ```

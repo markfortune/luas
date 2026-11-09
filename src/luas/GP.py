@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 from typing import Any, Optional, Callable, Union, Dict, Tuple
 from tqdm import tqdm
+from warnings import warn
 
 from luas.kernel_selector import kernel_selector
 from luas.kernels.covtype import CovType
@@ -25,6 +26,7 @@ from luas.convenience_fns import (
     interp_params,
     stack_params,
     stack_obs_and_pred_points,
+    diagnose_bad_laplace,
 )
 
 __all__ = ["GP"]
@@ -173,14 +175,19 @@ class GP(object):
         self.build_kf = kernel_selector(p, self.x, kf = self.kf, use_kernel = use_kernel,
                                         verbose = verbose, kernel_select_kwargs = kernel_select_kwargs,
                                         **kernel_kwargs)
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
         
-        self.opt_name = self.kf_eval.opt_name
+        self.opt_name = kf_eval.opt_name
+
+        # aliases because Americans exist
+        self.optimize = self.optimise
+        self.orthogonalize = self.orthogonalise
+
         if verbose:
             print(f"Using: {self.opt_name}")
 
             if "orthogonalise" in kernel_kwargs.keys() and kernel_kwargs["orthogonalise"] == True:
-                if self.kf_eval.opt_name == "MultiLowRankKernel":
+                if kf_eval.opt_name == "MultiLowRankKernel":
                     print("Will orthogonalise components, note this will ignore any non-orthogonal component of the whitened alpha vectors!")
                 else:
                     raise Exception("Orthogonalise components only implemented for MultiLowRankKernel with N_alpha > 1")
@@ -222,19 +229,19 @@ class GP(object):
 
         """
 
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})
 
         # The Conditional CovType has a non-square matrix square root
         # which expects a random normal vector of a different shape to the output data
-        z_shape = getattr(self.kf_eval, "sqrt_input_shape", self.data_shape)
+        z_shape = getattr(kf_eval, "sqrt_input_shape", self.data_shape)
 
         if samples == 1:
             z = np.random.normal(size = z_shape)
-            R = self.kf_eval.matrix_sqrt(z)
+            R = kf_eval.matrix_sqrt(z)
         else:
             z = np.random.normal(size = (samples, *z_shape))
-            matrix_sqrt_jit = jax.jit(self.kf_eval.matrix_sqrt)
+            matrix_sqrt_jit = jax.jit(kf_eval.matrix_sqrt)
 
             if return_variance:
                 variance = jnp.zeros(self.data_shape)
@@ -272,10 +279,10 @@ class GP(object):
 
         """
 
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
 
-        if hasattr(self.kf_eval, "diagonal"):
-            return self.kf_eval.diagonal(self.x, **kwargs)
+        if hasattr(kf_eval, "diagonal"):
+            return kf_eval.diagonal(self.x, **kwargs)
         else:
             if samples is not None:
                 print("Estimating diagonal of GP covariance matrix stochastically, this may take a while for large models...")
@@ -316,11 +323,11 @@ class GP(object):
         
         # Calculate the residuals after subtraction of the deterministic mean function
         R = Y - self.mf(p, self.x)
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
         
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})
         
-        logL_val = self.kf_eval.logL(R, stored_values = stored_values)
+        logL_val = kf_eval.logL(R, stored_values = stored_values)
         
         return logL_val
     
@@ -390,10 +397,74 @@ class GP(object):
         return model, var_dict, p_vary
 
 
+    def numpyro_model(
+            self,
+            p: PyTree,
+            Y: JAXArray,
+            param_bounds: PyTree = {},
+            vars: Optional[list] = None,
+            fixed_vars: Optional[list] = None,
+            bound_tol = 1e-9,
+        ):
+            r"""Builds a ``NumPyro`` model of the GP posterior, for optimisation or sampling with ``NumPyro``.
+    
+            Each parameter being varied is given a uniform prior between its bounds in ``param_bounds``
+            (``pm.Uniform``), or an improper flat prior if it has no bounds (``pm.Flat``). The log posterior
+            from :meth:`logP_stored`, which includes the GP's own log prior function, is added to the model as a
+            ``pm.Potential``. Prints which parameters are being varied and which are fixed.
+    
+            Requires ``PyMC`` to be installed.
+    
+            Example:
+                ``param_bounds`` should be of the form ``param_bounds[par] = [lower_bound, upper_bound]``,
+                where the bounds are scalars or arrays with the same shape as ``p[par]``.
+    
+            Args:
+                p (PyTree): Parameters, including any hyperparameters needed by the kernel function
+                    and any parameters needed by the mean function. Also passed to the log prior function. Used as the values of any fixed parameters and as the starting values of the
+                    parameters being varied.
+                Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
+                    e.g. ``(N_l, N_t)`` for 2D data.
+                param_bounds (PyTree, optional): Lower and upper bounds for any of the parameters being varied.
+                vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to vary. All other
+                    parameters are kept fixed. Cannot be given together with ``fixed_vars``.
+                fixed_vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to keep fixed, as an
+                    alternative to ``vars``. If neither is given, all parameters are varied.
+                bound_tol (Scalar, optional): Starting values which lie exactly on a bound are moved inside it by
+                    this amount (see :func:`luas.convenience_fns.check_params_in_bounds`). Defaults to ``1e-9``.
+    
+            Returns:
+                (pm.Model, dict, PyTree): A tuple of three elements: the ``PyMC`` model; a dictionary of the
+                ``PyMC`` variables for each parameter being varied, together with the values of the fixed
+                parameters; and the starting values of the parameters being varied (as NumPy arrays), which can
+                be used as the starting point for ``pm.find_MAP`` or ``pm.sample``.
+    
+            """
+            # Lazy import to avoid PyMC being a dependency unless needed
+            from luas.numpyro_ext import build_numpyro_model
+    
+            # This function returns a PyTree p_vary which has only the (key, value) pairs of
+            # parameters being varied
+            # make_p is also returned which is a function with returns the parameters in p_vary
+            # with all fixed parameters added back in
+            p_vary, make_p = varying_params_wrapper(p, vars = vars, fixed_vars = fixed_vars)
+            p_fixed = {k:v for (k, v) in p.items() if k not in p_vary.keys()}
+            
+            ordered_param_list = order_list(list(p_vary.keys()))
+    
+            p_vary = check_params_in_bounds(p_vary, param_bounds, bound_tol = bound_tol)
+    
+            # build a PyMC model for optimisation and inference
+            model = build_numpyro_model(self, p_vary, Y, ordered_param_list, p_fixed = p_fixed, param_bounds = param_bounds)
+            
+            return model
 
-    def optimise(self, p_init, Y, param_bounds = {}, vars = None, fixed_vars = None, maxeval = 5000, include_transformed = False, **kwargs):
+
+
+    
+    def optimise(self, p_init, Y, param_bounds = {}, vars = None, fixed_vars = None, maxeval = 20000, include_transformed = False, **kwargs):
         r"""Finds the parameters which maximise the posterior (the maximum a posteriori fit) using
-        ``pm.find_MAP``.
+        ``pm.find_MAP``. You can also use the alias ``optimize`` because Americans.
 
         Builds a ``PyMC`` model with :meth:`pymc_model` and optimises it starting from ``p_init``. Requires
         ``PyMC`` to be installed.
@@ -419,16 +490,16 @@ class GP(object):
 
         """
         # Lazy import to avoid PyMC being a dependency unless needed
-        import pymc as pm
+        from luas.pymc_ext import find_MAP
 
         pymc_model, var_dict, p_pymc = self.pymc_model(p_init, Y, param_bounds = param_bounds, vars = vars, fixed_vars = fixed_vars)
 
         # Use PyMC's maximum posteriori optimisation function
-        map_estimate = pm.find_MAP(
+        map_estimate = find_MAP(
             model = pymc_model,               # PyMC model to optimise
             include_transformed = include_transformed, # If this is true it will also output the PyMC transformed values of bounded parameters
             start = p_pymc,              # Starting point of optimisations
-            maxeval = maxeval,             # Maximum steps to run (normally will converge before this)
+            maxeval = maxeval,           # Maximum steps to run (normally will converge before this)
             **kwargs,
         )
 
@@ -475,9 +546,9 @@ class GP(object):
         
         R = Y - self.mf(p,  self.x)
         
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = stored_values)  
-        logL_val = self.kf_eval.logL(R, stored_values = stored_values)
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = stored_values)  
+        logL_val = kf_eval.logL(R, stored_values = stored_values)
     
         return logL_val, stored_values
 
@@ -512,9 +583,9 @@ class GP(object):
 
         R = Y - self.mf(p,  self.x)
 
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})  
-        logL_val = self.kf_eval.logL(R, stored_values = stored_values)
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})  
+        logL_val = kf_eval.logL(R, stored_values = stored_values)
 
         logPrior = self.logPrior(p, self.x)
         logP = logPrior + logL_val
@@ -559,9 +630,9 @@ class GP(object):
         
         R = Y - self.mf(p,  self.x)
         
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = stored_values)  
-        logL_val = self.kf_eval.logL(R, stored_values = stored_values)
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = stored_values)  
+        logL_val = kf_eval.logL(R, stored_values = stored_values)
 
         logPrior = self.logPrior(p, self.x)
         logP = logPrior + logL_val
@@ -689,15 +760,17 @@ class GP(object):
         Note:
             The predictive uncertainty is estimated from random samples of the conditional GP, which can be
             slow for large data sets. The returned conditional GP object can also be used to draw samples
-            from the predictive distribution directly, e.g. ``gp_cond.sample(p_pred)``.
+            from the predictive distribution directly, e.g. ``gp_cond.sample(p_pred)``, but its .
 
         Args:
             p (PyTree): Parameters at the observed locations, including any hyperparameters needed by the
                 kernel function and any parameters needed by the mean function.
             Y (JAXArray): Observed data at the locations ``X_obs``.
-            p_pred (PyTree, optional): Parameters at the prediction locations. Only needed for parameters
+            p_pred (PyTree, optional): Parameters at the prediction locations. Only used for parameters
                 which take different values at the prediction locations (see ``params_to_stack``).
-                Defaults to a copy of ``p``.
+                All other values are from p. Note that scalar values cannot be affected by p_pred,
+                so having a different value for observed and predicted locations requires making it
+                a vector as long as the dimension it's applied in.
             X_obs (JAXArray | tuple, optional): Observed input locations, in the same format as ``X`` when
                 creating the GP. Defaults to the input locations the GP was created with.
             X_pred (JAXArray | tuple, optional): Prediction locations. For 1D data a JAXArray. For 2D data a
@@ -739,7 +812,8 @@ class GP(object):
             - **pred_err** (JAXArray) - The estimated predictive standard deviation.
             - **M_pred** (JAXArray) - The mean function at the prediction locations.
             - **gp_cond** (GP) - A GP object describing the conditional (predictive) distribution at the
-              prediction locations, which takes ``p_pred`` as its parameters.
+              prediction locations, which takes ``p_pred`` as its parameters. Warning: still experimental
+              and may break on some other methods!
 
         """
         if self.dim != 1 and self.dim != 2:
@@ -824,13 +898,13 @@ class GP(object):
         R = Y - M_obs
 
         # Calculate K^-1 R
-        self.kf_eval = self.build_kf(p_obs, X_obs)
-        self.kf_eval, stored_values = self.kf_eval.decompose(X_obs)
-        K_inv_R = self.kf_eval.inverse(R)
+        kf_eval = self.build_kf(p_obs, X_obs)
+        kf_eval, stored_values = kf_eval.decompose(X_obs)
+        K_inv_R = kf_eval.inverse(R)
         logdet_K_train = stored_values["logdet"]
 
         # Keep the decomposed training kernel, the conditional covariance needs K^-1
-        kf_eval_train = self.kf_eval
+        kf_eval_train = kf_eval
 
         # Calculate K_*^T K_inv_R by building the full ((K, K_*), (K_*^T, K_**))
         K_inv_R_to_mult = jnp.zeros(N_full)
@@ -840,8 +914,8 @@ class GP(object):
         def gp_mean_cond_fn(p_pred, X_full):
             p_full = stack_params(p_obs, p_pred, stack_names = params_to_stack, sort_fns = sort_fns)
 
-            self.kf_eval_full = self.build_kf(p_full, X_full)
-            Ks_Kinv_R_term = self.kf_eval_full.matmul(X_full, X_full, K_inv_R_to_mult, wn = False, full = True)
+            kf_eval_full = self.build_kf(p_full, X_full)
+            Ks_Kinv_R_term = kf_eval_full.matmul(X_full, X_full, K_inv_R_to_mult, wn = False, full = True)
 
             if pred_loc_equals_obs:
                 M_pred = M_obs.copy()
@@ -922,16 +996,16 @@ class GP(object):
         self,
         p: PyTree,
         Y: PyTree,
-        regularise: Optional[bool] = True,
-        regularise_const: Optional[Scalar] = 1e-10,
+        regularise_std: Optional[PyTree] = None,
         vars: Optional[list] = None,
         fixed_vars: Optional[list] = None, 
         return_array: Optional[bool] = False,
         large: Optional[bool] = False,
-        large_block_size: Optional[int] = 50,
+        large_block_size: Optional[int] = 20,
         large_jit: Optional[bool] = True,
         logP_fn: Optional[Callable] = None,
         hessian_mat: Optional[JAXArray] = None,
+        n_top: Optional[int] = 3,
     ) -> Tuple[Union[PyTree, JAXArray], list]:
         r"""Computes the Laplace approximation of the posterior at the location of ``p``, which should
         be the best-fit (maximum a posteriori) parameters.
@@ -941,6 +1015,13 @@ class GP(object):
         equivalent to a second-order Taylor series approximation of the log posterior. It gives a quick estimate
         of the posterior without running MCMC, and is also useful for initialising MCMC with a good tuning
         matrix when many correlated parameters are being sampled.
+
+        The negative Hessian (the precision matrix) must be positive definite for the covariance matrix to
+        exist. It may not be if ``p`` is not at the best fit, if a parameter has no effect on the log
+        posterior, or if some parameters are degenerate with each other. In that case a ``ValueError`` is
+        raised which lists the parameters responsible (see
+        :func:`luas.convenience_fns.diagnose_bad_laplace`). Poorly constrained or degenerate parameters can be
+        handled by placing Gaussian priors on them with ``regularise_std``.
 
         Note:
             This calculation can be memory intensive for large data sets with many free parameters. Setting
@@ -952,12 +1033,19 @@ class GP(object):
                 and any parameters needed by the mean function. Also passed to the log prior function.
             Y (JAXArray): Observed data, with the same shape as the data set (``GP.data_shape``),
                 e.g. ``(N_l, N_t)`` for 2D data.
-            regularise (bool, optional): Whether to regularise the covariance matrix so it is positive definite.
-                Any eigenvalues of the covariance matrix smaller than ``regularise_const`` times the largest
-                absolute eigenvalue are raised to that value, which handles poorly constrained parameters.
-                Defaults to ``True``.
-            regularise_const (Scalar, optional): The relative size of the smallest eigenvalue allowed when
-                ``regularise = True``. Defaults to ``1e-10``.
+            regularise_std (PyTree, optional): Standard deviations of Gaussian priors centred on ``p`` to
+                place on parameters which are poorly constrained by the data, given as
+                ``regularise_std[par] = std``. Each ``std`` is in the same units as ``p[par]``, must be
+                positive, and can be a scalar or an array that broadcasts to the shape of ``p[par]``. For each
+                of these parameters :math:`1/\sigma^2` is added to the diagonal of the precision matrix.
+                Smaller values force ill-constrained parameters to appear better constrained, and a prior on
+                one parameter of a degenerate pair is usually enough. This is a soft limit rather than a hard
+                maximum: it also slightly reduces the variance of well-constrained parameters, and the variance
+                is only guaranteed to be at most :math:`\sigma^2` if the precision matrix without the prior is
+                positive semi-definite. The result is the Laplace approximation of the posterior multiplied by
+                these priors, which is suitable as a tuning matrix for MCMC but should not be quoted as
+                parameter uncertainties. Names not in ``p`` raise an exception, and names of parameters being
+                kept fixed are ignored. Defaults to ``None``, which adds no priors.
             vars (:obj:`list` of :obj:`str`, optional): The names of the parameters to calculate the Laplace
                 approximation for. All other parameters are kept fixed. Cannot be given together with
                 ``fixed_vars``.
@@ -970,7 +1058,7 @@ class GP(object):
                 (see :func:`luas.convenience_fns.large_hessian_calc`). This can take significantly longer but
                 makes no approximation. Defaults to ``False``.
             large_block_size (int, optional): The number of rows of the Hessian calculated at once when
-                ``large = True``. Larger values may be faster but cost more memory. Defaults to 50.
+                ``large = True``. Larger values may be faster but cost more memory. Defaults to 20.
             large_jit (bool, optional): Whether to JIT compile the Hessian calculation when ``large = True``.
                 Defaults to ``True``.
             logP_fn (Callable, optional): The function to take the Hessian of, called as ``logP_fn(p, Y)``.
@@ -978,6 +1066,9 @@ class GP(object):
             hessian_mat (JAXArray, optional): A Hessian matrix to use instead of calculating it, as a 2D JAXArray
                 ordered as ``jax.flatten_util.ravel_pytree`` orders the parameters being varied. ``Y`` is then
                 not used.
+            n_top (int, optional): If the precision matrix is not positive definite, the number of parameters
+                listed in the error message for each problematic direction. Values below 2 can hide which
+                parameters are degenerate with each other. Defaults to 3.
 
         Returns:
             (JAXArray, :obj:`list` of :obj:`str`) or (PyTree, :obj:`list` of :obj:`str`): A tuple of the
@@ -985,6 +1076,12 @@ class GP(object):
             as a nested PyTree) and the list of parameter names in the order they appear in the JAXArray. The
             list matches how ``jax.flatten_util.ravel_pytree`` orders the parameters and is returned in both
             cases for consistency.
+
+        Raises:
+            ValueError: If the precision matrix (including any ``regularise_std`` priors) is not positive
+                definite. The message lists the parameters responsible.
+            Exception: If the Hessian contains NaN or inf values, or if ``regularise_std`` names a parameter
+                not in ``p`` or gives a value that is not positive.
 
         """
         
@@ -1014,21 +1111,41 @@ class GP(object):
                 # For inverting to a covariance matrix we need to convert the nested PyTree returned by
                 # jax.hessian into a matrix which we can do with this helper function from luas.convenience_fns
                 hessian_mat = pytree_to_array_2D(p_vary, hessian_mat)
-                
-        # Help symmetrise matrix which can help mitigate numerical errors
-        hessian_mat = (hessian_mat + hessian_mat.T)/2.
-        
-        if regularise:
-            hess_eigvals, eigvecs = jnp.linalg.eigh(hessian_mat)
-            eigvals = -1/hess_eigvals
 
-            epsilon = jnp.max(jnp.abs(eigvals))*regularise_const
-            eigvals_clipped = jnp.maximum(eigvals, epsilon)
-            cov_mat = eigvecs @ jnp.diag(eigvals_clipped) @ eigvecs.T
-        else:
-            # Performs the actual Laplace approximation by inverting the negative hessian
-            cov_mat = jnp.linalg.inv(-hessian_mat)
+        if not bool(jnp.all(jnp.isfinite(hessian_mat))):
+            raise Exception("The Hessian contains NaN or inf values, so the Laplace approximation is not valid.")
+                
+        # Precision matrix is just the negative hessian
+        precision_mat = -hessian_mat
         
+        if regularise_std is not None:
+            for k in regularise_std.keys():
+                if k not in p.keys():
+                    raise Exception(f"regularise_std prior on parameter {k} not found in model parameters.")
+                elif jnp.any(regularise_std[k] <= 0.):
+                    raise Exception(f"Must give a positive value for normal priors on parameters, gave {regularise_std[k]} for {k}.")
+
+            regularise_dict = {}
+            for k in p_vary.keys():
+                if k in regularise_std.keys():
+                    regularise_dict[k] = jnp.broadcast_to(1/regularise_std[k]**2, jnp.shape(p_vary[k]))
+                else:
+                    regularise_dict[k] = jnp.broadcast_to(0., jnp.shape(p_vary[k]))
+            regularise_arr, _ = jax.flatten_util.ravel_pytree(regularise_dict)
+            precision_mat += jnp.diag(regularise_arr)
+
+        # Performs the actual Laplace approximation by inverting the negative hessian/precision matrix
+        L = jnp.linalg.cholesky(precision_mat)
+
+        if bool(jnp.all(jnp.isfinite(jnp.diag(L)))):
+            L_inv = jax.scipy.linalg.solve_triangular(L, jnp.eye(L.shape[0]), lower=True)
+            cov_mat = L_inv.T @ L_inv
+        else:
+            raise ValueError(
+                "Could not invert the precision matrix because it is not positive definite:\n"
+                + diagnose_bad_laplace(precision_mat, p_vary, n_top = n_top) +
+                "\nTry re-optimising with a smaller tol and/or higher maxeval, or set regularise_std on the parameters listed."
+            )
 
         # Generate the list which gives the order of the parameters in the covariance matrix
         ordered_param_list = order_list(list(p_vary.keys()))
@@ -1048,9 +1165,10 @@ class GP(object):
         vars: Optional[list] = None,
         fixed_vars: Optional[list] = None,
         large: Optional[bool] = False,
-        large_block_size: Optional[int] = 50,
+        large_block_size: Optional[int] = 20,
         return_array: Optional[bool] = False,
         large_jit: Optional[bool] = True,
+        regularise_std: Optional[PyTree] = None,
         **kwargs,
     ) -> Tuple[Union[PyTree, JAXArray], list]:
         r"""Computes the Laplace approximation at the location of ``p`` in the unbounded space that
@@ -1082,12 +1200,18 @@ class GP(object):
             large (bool, optional): Whether to calculate the Hessian in blocks of rows to reduce the memory cost.
                 Defaults to ``False``.
             large_block_size (int, optional): The number of rows of the Hessian calculated at once when
-                ``large = True``. Defaults to 50.
+                ``large = True``. Defaults to 20.
             return_array (bool, optional): Whether to return the covariance matrix as a JAXArray, or as a nested
                 PyTree. Defaults to ``False``.
             large_jit (bool, optional): Whether to JIT compile the Hessian calculation when ``large = True``.
                 Defaults to ``True``.
-            **kwargs: Passed to :meth:`laplace_approx`, e.g. ``regularise``.
+            regularise_std (PyTree, optional): Standard deviations of Gaussian priors to place on poorly
+                constrained parameters, passed to :meth:`laplace_approx` (see there for details). For parameters
+                in ``param_bounds`` the standard deviation currently applies to the transformed (unbounded)
+                variable rather than to the parameter itself, while other parameters use their own units. This
+                will likely change in a future version. Every name must be a parameter being varied, as naming
+                a fixed parameter raises an exception. Defaults to ``None``, which adds no priors.
+            **kwargs: Passed to :meth:`laplace_approx`, e.g. ``n_top``.
 
         Returns:
             (JAXArray, :obj:`list` of :obj:`str`) or (PyTree, :obj:`list` of :obj:`str`): A tuple of the
@@ -1150,7 +1274,8 @@ class GP(object):
         # to invert to calculate the covariance matrix
         hessian_mat = pytree_to_array_2D(p_transf, hessian_mat)
         cov_mat, ordered_param_list = self.laplace_approx(p_transf, Y, hessian_mat = hessian_mat,
-                                                          return_array = return_array, **kwargs)
+                                                          return_array = return_array, regularise_std = regularise_std,
+                                                          **kwargs)
             
         return cov_mat, ordered_param_list
 
@@ -1208,19 +1333,19 @@ class GP(object):
         if axes_labels is None:
             axes_labels = [rf"$x_{d+1}$" for d in range(self.dim)]
         
-        self.kf_eval = self.build_kf(p, self.x)
-        N_kron_terms = 1 + len(self.kf_eval.K_list)
+        kf_eval = self.build_kf(p, self.x)
+        N_kron_terms = 1 + len(kf_eval.K_list)
 
         if self.dim == 1:
-            K_list = [[self.kf_eval.evaluate(self.x, self.x, wn = wn, full = True)]]
+            K_list = [[kf_eval.evaluate(self.x, self.x, wn = wn, full = True)]]
         else:
             K_list = []
             for d in range(self.dim):
-                K_list.append([self.kf_eval.Sigma[d].evaluate(self.x[d], self.x[d], wn = wn, full = True)])
+                K_list.append([kf_eval.Sigma[d].evaluate(self.x[d], self.x[d], wn = wn, full = True)])
                 
                 # Build each component matrix
                 for i in range(N_kron_terms-1):
-                    K_list[-1].append(self.kf_eval.K_list[i][d].evaluate(self.x[d], self.x[d], wn = wn, full = True))
+                    K_list[-1].append(kf_eval.K_list[i][d].evaluate(self.x[d], self.x[d], wn = wn, full = True))
 
 
         fig, ax = plt.subplots(N_kron_terms, self.dim, figsize = (5*self.dim, 5*N_kron_terms), squeeze=False)
@@ -1261,9 +1386,9 @@ class GP(object):
         p: PyTree,
         Y: JAXArray,
         x_plot = None,
-        return_fig = False,
+        return_fig = None,
         return_fit = False,
-        axes_labels = [r"$x_1$", r"$x_2$"],
+        axes_labels = None,
         sharey = None,
         **fig_kwargs,
     ) -> plt.Figure:
@@ -1285,7 +1410,8 @@ class GP(object):
             x_plot (tuple, optional): The values along each axis of the plot, with one JAXArray per dimension.
                 Defaults to the input locations the GP was created with (the first row, if there are several
                 input variables along a dimension).
-            return_fig (bool, optional): Whether to return the figure. Defaults to ``False``.
+            return_fig (bool, optional): Whether to return the figure. Defaults to ``False``, unless 3D plotting
+                which defaults to ``True``.
             return_fit (bool, optional): Whether to return the GP predictive mean and mean function (only if
                 ``return_fig = False``). Defaults to ``False``.
             axes_labels (:obj:`list` of :obj:`str`, optional): Axis labels for each dimension.
@@ -1313,6 +1439,17 @@ class GP(object):
                     else:
                         x_plot += (x[0, :],)
 
+        if return_fig is None:
+            if self.dim < 3:
+                return_fig = False
+            else:
+                return_fig = True
+
+        if axes_labels is None:
+            axes_labels = []
+            for i in range(self.dim):
+                axes_labels.append(rf"$x_{i}$")
+
         if sharey is None:
             # default to sharey = False for 1D fits, but True for 2D fits
             if self.dim == 1:
@@ -1322,26 +1459,29 @@ class GP(object):
     
         # Perform GP regression at the observed data locations
         gp_mean, M = self.gp_mean_calc(p, Y, return_mf = True)
-        
-        fig = plt.figure(figsize = (20, 5), **fig_kwargs)
-        ax = fig.subplots(1, 4, sharey = sharey)
 
         titles = ["Data", "Mean function", "GP mean (excl. mean function)", "Residual noise"]
         data = [Y, M, gp_mean - M, Y - gp_mean]
 
         if self.dim == 1:
+            fig = plt.figure(figsize = (20, 5), **fig_kwargs)
+            ax = fig.subplots(1, 4, sharey = sharey)
             ax[0].plot(x_plot[0], Y, label = "Data")
             ax[0].plot(x_plot[0], M, label = "Mean function")
-            ax[0].plot(x_plot[0], gp_mean, label = "GP mean")
+            ax[0].plot(x_plot[0], gp_mean, "k", label = "GP mean")
             ax[0].legend()
 
             for i in range(1, 4):
                 ax[i].plot(x_plot[0], data[i])
                 ax[i].set_xlabel(axes_labels[0])
                 ax[i].set_title(titles[i])
+            plt.tight_layout()
         
         elif self.dim == 2:
-
+            
+            fig = plt.figure(figsize = (20, 5), **fig_kwargs)
+            ax = fig.subplots(1, 4, sharey = sharey)
+            
             ims = [ax[i].pcolormesh(x_plot[1], x_plot[0], data[i], shading="nearest")
                    for i in range(4)]
 
@@ -1357,11 +1497,16 @@ class GP(object):
 
             # pcolormesh defaults to having the y-axis decrease with height which is weird so invert it
             plt.gca().invert_yaxis()
+            plt.tight_layout()
+
+        elif self.dim == 3:
+            # Interactive player
+            from luas.convenience_fns import make_video
+            fig = make_video(*data, X=self.x, titles=titles,
+                        axes_labels = axes_labels, **fig_kwargs)
 
         else:
             raise Exception(f"Plotting of {self.dim}D data not yet implemented")
-
-        plt.tight_layout()
 
         if return_fig:
             return fig
@@ -1370,7 +1515,7 @@ class GP(object):
 
     
     def plot_lightcurves(self, p, Y, sep = None, time_dim = 1, xlabel = r"Time", ylabel = "Values + offset", bin = None,
-                         figsize = (12, 8), sharey = True, **fig_kwargs):
+                         figsize = (12, 8), sharey = True, titles = None, **fig_kwargs):
         r"""Plots each row of a 2D data set as a light curve, with the fit and the residuals.
 
         Plots three panels with the light curves offset vertically from each other: the data with the mean
@@ -1410,6 +1555,9 @@ class GP(object):
         else:
             x_t = self.x[time_dim]
 
+        if titles is None:
+            titles = ["Raw light curves", "Data - Mean Function", "Data - GP"]
+
         if time_dim == 0:
             gp_mean = gp_mean.T
             M = M.T
@@ -1418,7 +1566,8 @@ class GP(object):
         N_l = Y.shape[0]
 
         if sep is None:
-            sep = 4 * Y.std(1).max()
+            diff_between_curves = Y[:-1, :] - Y[1:, :]
+            sep = 2 * diff_between_curves.max()
         
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize = figsize, sharey = sharey, **fig_kwargs)
         for i in range(N_l):
@@ -1426,12 +1575,17 @@ class GP(object):
             ax1.plot(x_t, M[i, :] + np.arange(0, -sep*N_l, -sep)[i], '--', color = "tab:orange")
             ax1.plot(x_t, gp_mean[i, :] + np.arange(0, -sep*N_l, -sep)[i], 'k-', ms = 3)
 
-            ax2.plot(x_t, Y[i, :] - M[i, :] + np.arange(1, 1-sep*N_l, -sep)[i], 'o', color = "tab:blue", ms = 2)
-            ax2.plot(x_t, gp_mean[i, :] - M[i, :] + np.arange(1, 1-sep*N_l, -sep)[i], 'k-')
+            mean_M = M[i, :].mean()
+            ax2.plot(x_t, Y[i, :] - M[i, :] + np.arange(mean_M, mean_M-sep*N_l, -sep)[i], 'o', color = "tab:blue", ms = 2)
+            ax2.plot(x_t, np.ones(M.shape[1]) * np.arange(mean_M, mean_M-sep*N_l, -sep)[i], '--', color = "tab:orange")
+            ax2.plot(x_t, gp_mean[i, :] - M[i, :] + np.arange(mean_M, mean_M-sep*N_l, -sep)[i], 'k-')
 
-            ax3.plot(x_t, Y[i, :] - gp_mean[i, :] + np.arange(1, 1-sep*N_l, -sep)[i], 'o', color = "tab:blue", ms = 2)
-            ax3.plot(x_t, np.arange(1, 1-sep*N_l, -sep)[i]*np.ones_like(x_t), 'k-', ms = 3)
-            
+            ax3.plot(x_t, Y[i, :] - gp_mean[i, :] + np.arange(mean_M, mean_M-sep*N_l, -sep)[i], 'o', color = "tab:blue", ms = 2)
+            ax3.plot(x_t, np.arange(1, 1-sep*N_l, -sep)[i]*mean_M*np.ones_like(x_t), 'k-', ms = 3)
+
+        ax1.set_title(titles[0])
+        ax2.set_title(titles[1])
+        ax3.set_title(titles[2])
         ax1.set_xlabel(xlabel)
         ax2.set_xlabel(xlabel)
         ax3.set_xlabel(xlabel)
@@ -1636,14 +1790,14 @@ class GP(object):
         
         # Calculate the residuals after subtraction of the deterministic mean function
         R = Y - self.mf(p, self.x)
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
         
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})
         
         if inverse:
-            logL_val = self.kf_eval.inv_transform_fn(R, transpose = transpose)
+            logL_val = kf_eval.inv_transform_fn(R, transpose = transpose)
         else:
-            logL_val = self.kf_eval.transform_fn(R, transpose = transpose)
+            logL_val = kf_eval.transform_fn(R, transpose = transpose)
         
         return logL_val
 
@@ -1667,10 +1821,10 @@ class GP(object):
 
         """
         
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
         
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, full = True, stored_values = {})
-        K_inv_R = self.kf_eval.inverse(R)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})
+        K_inv_R = kf_eval.inverse(R)
         
         return K_inv_R
 
@@ -1696,12 +1850,12 @@ class GP(object):
 
         """
         
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
 
         if len(self.x) == 1:
-            K_R = self.kf_eval.matmul(self.x[0], self.x[0], R, full = full, **kwargs)
+            K_R = kf_eval.matmul(self.x[0], self.x[0], R, full = full, **kwargs)
         else:
-            K_R = self.kf_eval.matmul(self.x, self.x, R, full = full, **kwargs)
+            K_R = kf_eval.matmul(self.x, self.x, R, full = full, **kwargs)
         
         return K_R
         
@@ -1723,8 +1877,8 @@ class GP(object):
 
         """
         if self.opt_name == "MultiLowRankKernel":
-            self.kf_eval = self.build_kf(p, self.x)
-            return self.kf_eval.make_orthogonal(A, self.x)
+            kf_eval = self.build_kf(p, self.x)
+            return kf_eval.make_orthogonal(A, self.x)
         else:
             raise Exception("Orthogonalising components only compatible with MultiLowRankKernel")
 
@@ -1752,10 +1906,10 @@ class GP(object):
 
         """
         
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
         
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
-        L_R = self.kf_eval.matrix_sqrt(R, transpose = transpose)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})
+        L_R = kf_eval.matrix_sqrt(R, transpose = transpose)
         
         return L_R
 
@@ -1784,10 +1938,10 @@ class GP(object):
 
         """
         
-        self.kf_eval = self.build_kf(p, self.x)
+        kf_eval = self.build_kf(p, self.x)
         
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})
-        L_inv_R = self.kf_eval.matrix_inv_sqrt(R, transpose = transpose)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})
+        L_inv_R = kf_eval.matrix_inv_sqrt(R, transpose = transpose)
         
         return L_inv_R
 
@@ -1821,9 +1975,9 @@ class GP(object):
         R = Y - self.mf(p, self.x)
         
         # Calculate log likelihood and stored values from decomposition
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})  
-        logL_val = self.kf_eval.logL_hessianable(R, stored_values = stored_values)
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})  
+        logL_val = kf_eval.logL_hessianable(R, stored_values = stored_values)
         
         return logL_val
 
@@ -1859,9 +2013,9 @@ class GP(object):
         # Subtract mean function from observed data
         R = Y - self.mf(p, self.x)
 
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = stored_values)  
-        logL_val = self.kf_eval.logL_hessianable(R, stored_values = stored_values)
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = stored_values)  
+        logL_val = kf_eval.logL_hessianable(R, stored_values = stored_values)
     
         return logL_val, stored_values
     
@@ -1894,9 +2048,9 @@ class GP(object):
         logPrior = self.logPrior(p, self.x)
         R = Y - self.mf(p, self.x)
         
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = {})  
-        logL_val = self.kf_eval.logL_hessianable(R, stored_values = stored_values)
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = {})  
+        logL_val = kf_eval.logL_hessianable(R, stored_values = stored_values)
         logP = logPrior + logL_val
         
         return logP
@@ -1933,9 +2087,9 @@ class GP(object):
         
         R = Y - self.mf(p, self.x)
 
-        self.kf_eval = self.build_kf(p, self.x)
-        self.kf_eval, stored_values = self.kf_eval.decompose(self.x, stored_values = stored_values)  
-        logL_val = self.kf_eval.logL_hessianable(R, stored_values = stored_values)
+        kf_eval = self.build_kf(p, self.x)
+        kf_eval, stored_values = kf_eval.decompose(self.x, stored_values = stored_values)  
+        logL_val = kf_eval.logL_hessianable(R, stored_values = stored_values)
         
         logPrior = self.logPrior(p, self.x)
         logP = logPrior + logL_val

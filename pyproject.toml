@@ -6,13 +6,13 @@ authors = [{ name = "Mark Fortune", email = "markfortuneis@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11"   # the GitHub version of tinygp requires 3.11
 license = { text = "MIT" }
-# Minimum versions tested with the full test suite (Python 3.11, jax 0.4.38, numpy 1.24, scipy 1.10).
-# jax 0.10.1 is recommended. Install tinygp from GitHub: the PyPI release is missing fixes luas needs.
+# Minimum versions tested with full pytest run (Python 3.11, jax 0.4.38, numpy 1.24, scipy 1.10).
+# Install tinygp from GitHub: the PyPI release is missing fixes luas needs.
 dependencies = [
     "jax>=0.4.38",
     "numpy>=1.24",
     "scipy>=1.10",
-    "tinygp",
+    "tinygp>=0.3.1",
     "equinox",
     "matplotlib",
     "tqdm",
@@ -39,13 +39,15 @@ where = ["src"]
 
 [project.optional-dependencies]
 test = ["pytest"]
-exoplanet = ["jaxoplanet>=0.1.0", "astropy"]
+exoplanet = ["jaxoplanet>=0.1.0", "astropy", "pymc>=6", "corner>=2.3", "numpyro"]
 docs = [
     "luas[exoplanet]",
     "sphinx-book-theme",
     "myst-nb",
     "numpyro",
-    "pymc",
+    "pymc>=6",
+    "corner>=2.3",
+    "arviz",
 ]
 
 [tool.pytest.ini_options]

@@ -2,7 +2,7 @@
 
 # Why use luas?
 
-While there are already plenty of popular Gaussian process libararies - such as [`sklearn.gaussian_process`](https://scikit-learn.org/stable/modules/gaussian_process.html), [`george`](https://george.readthedocs.io), [`celerite`](https://celerite2.readthedocs.io) and [`tinygp`](https://tinygp.readthedocs.io/en/stable/index.html) - currently none of them implement the optimisations described in [Fortune et al. (2026)](https://github.com/markfortune/luas_dev). They allow for the exact calculation of the log likelihood for 2D data set of dimensions `(N_l, N_t)` in $\mathcal{O}(N_l^3 + N_t^3 + N_l N_t(N_l + N_t))$ runtime and $\mathcal{O}(N_l^2 + N_t^2)$ memory for any valid kernel function $k$ of the form:
+While there are already plenty of popular Gaussian process libararies - such as [`sklearn.gaussian_process`](https://scikit-learn.org/stable/modules/gaussian_process.html), [`george`](https://george.readthedocs.io), [`celerite`](https://celerite2.readthedocs.io) and [`tinygp`](https://tinygp.readthedocs.io/en/stable/index.html) - currently none of them implement the optimisations described in [Fortune et al. (2026)](https://github.com/markfortune/luas). They allow for the exact calculation of the log likelihood for 2D data set of dimensions `(N_l, N_t)` in $\mathcal{O}(N_l^3 + N_t^3 + N_l N_t(N_l + N_t))$ runtime and $\mathcal{O}(N_l^2 + N_t^2)$ memory for any valid kernel function $k$ of the form:
 
 $$
 k(\lambda_1, \lambda_2, t_1, t_2) = s_{l}(\lambda_1, \lambda_2)s_{t}(t_1, t_2) + k_{l}(\lambda_1, \lambda_2)k_{t}(t_1, t_2)
