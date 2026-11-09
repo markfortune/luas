@@ -2,7 +2,7 @@
 
 luas is a library focused on implementing fast and flexible 2D Gaussian processes using Kronecker product algebra, which assumes the data is rectangular and without missing values, but doesn't assume uniform sampling. We have also implemented ``luas`` for 1D datasets (e.g. time-series) and also N-dimensional datasets provided the kernel inputs lie on a grid. ``luas`` has been written in ``jax`` and can be easily used in combination with inference libraries such as ``PyMC`` and ``NumPyro``. Documentation and tutorials are located at https://luas.readthedocs.io/en/latest/.
 
-See [Fortune et al. (2026)](https://arxiv.org/abs/2611.09198) which explains the GP optimisations implemented in `luas`, while  [Fortune et al. (2024)](https://ui.adsabs.harvard.edu/abs/2024A%26A...686A..89F/abstract) is the original paper for ``luas`` which outlines the use of this package to analyse transmission spectroscopy observations.
+See [Fortune et al. 2026](https://arxiv.org/abs/2611.09198) which explains the GP optimisations implemented in `luas`, while  [Fortune et al. 2024](https://ui.adsabs.harvard.edu/abs/2024A%26A...686A..89F/abstract) is the original paper for ``luas`` which outlines the use of this package to analyse transmission spectroscopy observations.
 
 ## Installation
 
